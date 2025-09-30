@@ -11,6 +11,9 @@ import soundfile as sf
 import numpy as np
 from pydub import AudioSegment
 from pydub.silence import detect_nonsilent
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class AudioProcessor:
@@ -27,6 +30,7 @@ class AudioProcessor:
     def process_audio_file(self, file_path: str) -> Tuple[np.ndarray, int]:
         """
         Process audio file to the format required by the Whisper model.
+        Detects original sample rate, resamples properly, and adds silence buffer.
         
         Args:
             file_path: Path to the audio file
@@ -37,18 +41,57 @@ class AudioProcessor:
         # Get file extension
         file_ext = Path(file_path).suffix.lower()
         
-        # Try to load directly with librosa first
-        try:
-            audio_array, sample_rate = librosa.load(
-                file_path, 
-                sr=self.TARGET_SAMPLE_RATE,
-                mono=True
+        # Step 1: Load audio at its original sample rate first
+        # For MP3 files, use pydub first as it handles them better than librosa
+        if file_ext == '.mp3':
+            logger.info("MP3 file detected, using pydub for reliable loading...")
+            audio_array, original_sr = self._convert_with_pydub(file_path)
+            original_duration = len(audio_array) / original_sr
+            logger.info(f"Loaded via pydub: original_sr={original_sr}Hz, duration={original_duration:.2f}s, samples={len(audio_array)}")
+        else:
+            try:
+                # Load without resampling to preserve quality
+                # IMPORTANT: duration=None to load entire file
+                audio_array, original_sr = librosa.load(
+                    file_path, 
+                    sr=None,  # Keep original sample rate
+                    mono=True,
+                    duration=None  # Load entire file, don't truncate
+                )
+                original_duration = len(audio_array) / original_sr
+                logger.info(f"Loaded audio: original_sr={original_sr}Hz, duration={original_duration:.2f}s, samples={len(audio_array)}")
+            except Exception as e:
+                # If librosa fails, try pydub for format conversion
+                logger.info(f"Librosa failed, trying pydub: {e}")
+                audio_array, original_sr = self._convert_with_pydub(file_path)
+                original_duration = len(audio_array) / original_sr
+        
+        # Step 2: Resample to target sample rate if needed
+        if original_sr != self.TARGET_SAMPLE_RATE:
+            logger.info(f"Resampling from {original_sr}Hz to {self.TARGET_SAMPLE_RATE}Hz...")
+            audio_array = librosa.resample(
+                audio_array, 
+                orig_sr=original_sr, 
+                target_sr=self.TARGET_SAMPLE_RATE,
+                res_type='kaiser_best'  # High quality resampling
             )
-            return audio_array, sample_rate
-        except Exception as e:
-            # If librosa fails, try pydub for format conversion
-            print(f"Librosa failed, trying pydub: {e}")
-            return self._convert_with_pydub(file_path)
+            sample_rate = self.TARGET_SAMPLE_RATE
+            resampled_duration = len(audio_array) / sample_rate
+            logger.info(f"After resampling: duration={resampled_duration:.2f}s, samples={len(audio_array)}")
+        else:
+            sample_rate = original_sr
+            resampled_duration = original_duration
+        
+        # Step 3: Add silence buffer at the end to ensure complete transcription
+        silence_duration = 3.0  # seconds
+        silence_samples = int(silence_duration * sample_rate)
+        silence = np.zeros(silence_samples, dtype=audio_array.dtype)
+        audio_array = np.concatenate([audio_array, silence])
+        
+        logger.info(f"Added {silence_duration}s silence buffer at end")
+        logger.info(f"Final audio: sr={sample_rate}Hz, duration={len(audio_array)/sample_rate:.2f}s")
+        
+        return audio_array, sample_rate
     
     def _convert_with_pydub(self, file_path: str) -> Tuple[np.ndarray, int]:
         """
@@ -194,6 +237,25 @@ class AudioProcessor:
                     "end_time": end_sample / sample_rate,
                     "chunk_index": idx
                 })
+        
+        # Check if there's audio after the last detected chunk
+        if chunks:
+            last_chunk_end = chunks[-1]["end_time"]
+            total_duration = len(audio_array) / sample_rate
+            
+            # If there's more than 0.5 seconds of audio after the last chunk, add it
+            if total_duration - last_chunk_end > 0.5:
+                remaining_start = int(last_chunk_end * sample_rate)
+                remaining_audio = audio_array[remaining_start:]
+                
+                if len(remaining_audio) >= sample_rate * 0.1:
+                    chunks.append({
+                        "audio": remaining_audio,
+                        "start_time": last_chunk_end,
+                        "end_time": total_duration,
+                        "chunk_index": len(chunks)
+                    })
+                    logger.info(f"Added remaining audio chunk at end ({total_duration - last_chunk_end:.2f}s)")
         
         return chunks
     

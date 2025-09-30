@@ -107,11 +107,54 @@ class TranscriptionService:
                          for r in chunk_results]
             details = self._create_verse_details(combined_transcription, combined_timestamps, chunk_info)
             
+            # Calculate diagnostic timestamps
+            audio_input_end_timestamp = chunk_results[-1].get("chunk_end_time", 0) if chunk_results else 0
+            last_ayah_end_timestamp = details[-1]["audio_end_timestamp"] if details else "00:00:00.000"
+            
+            # Convert timestamp string to seconds
+            def timestamp_to_seconds(ts_str):
+                parts = ts_str.split(':')
+                return float(parts[0]) * 3600 + float(parts[1]) * 60 + float(parts[2])
+            
+            # Calculate ayah elapsed times
+            total_ayahs_elapsed_time = 0
+            total_silences_between_ayahs_time = 0
+            
+            for i, detail in enumerate(details):
+                start_sec = timestamp_to_seconds(detail["audio_start_timestamp"])
+                end_sec = timestamp_to_seconds(detail["audio_end_timestamp"])
+                ayah_duration = end_sec - start_sec
+                total_ayahs_elapsed_time += ayah_duration
+                
+                # Calculate silence between this ayah and next
+                if i < len(details) - 1:
+                    next_start_sec = timestamp_to_seconds(details[i + 1]["audio_start_timestamp"])
+                    silence = next_start_sec - end_sec
+                    total_silences_between_ayahs_time += silence
+            
+            last_ayah_end_sec = timestamp_to_seconds(last_ayah_end_timestamp) if details else 0
+            remaining_trailing_audio_time = audio_input_end_timestamp - last_ayah_end_sec
+            
+            # Format time helper
+            def seconds_to_timestamp(seconds):
+                hours = int(seconds // 3600)
+                minutes = int((seconds % 3600) // 60)
+                secs = seconds % 60
+                return f"{hours:02d}:{minutes:02d}:{secs:06.3f}"
+            
             return {
                 "success": True,
                 "data": {
                     "exact_transcription": combined_transcription,
-                    "details": details
+                    "details": details,
+                    "diagnostics": {
+                        "audio_input_end_timestamp": seconds_to_timestamp(audio_input_end_timestamp),
+                        "last_ayah_end_timestamp": last_ayah_end_timestamp,
+                        "total_ayahs_elapsed_time": seconds_to_timestamp(total_ayahs_elapsed_time),
+                        "total_silences_between_ayahs_time": seconds_to_timestamp(total_silences_between_ayahs_time),
+                        "remaining_trailing_audio_time": seconds_to_timestamp(remaining_trailing_audio_time),
+                        "time_difference": seconds_to_timestamp(audio_input_end_timestamp - total_ayahs_elapsed_time - total_silences_between_ayahs_time)
+                    }
                 }
             }
             

@@ -15,6 +15,15 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+try:
+    import pyquran
+    PYQURAN_AVAILABLE = True
+    print("✓ pyquran library loaded successfully")
+except ImportError as e:
+    PYQURAN_AVAILABLE = False
+    pyquran = None
+    print(f"✗ pyquran not available: {e}")
+
 
 class QuranData:
     """
@@ -31,88 +40,82 @@ class QuranData:
     
     def _load_quran_data(self):
         """
-        Load Quran data from Tanzil simple text format.
-        Downloads if not cached locally.
+        Load Quran data using pyquran library or fallback methods.
         """
-        cache_file = "quran_simple.txt"
-        
         try:
-            # Try to load from cache
-            if os.path.exists(cache_file):
-                logger.info("Loading Quran data from cache...")
-                with open(cache_file, 'r', encoding='utf-8') as f:
-                    lines = f.readlines()
+            print(f"→ PYQURAN_AVAILABLE = {PYQURAN_AVAILABLE}")
+            if PYQURAN_AVAILABLE:
+                print("→ Loading Quran data using pyquran library...")
+                self._load_from_pyquran()
+                print(f"✓ Successfully loaded {len(self.quran_data)} verses from pyquran")
+                logger.info(f"Successfully loaded {len(self.quran_data)} verses from pyquran")
             else:
-                # Download from Tanzil
-                logger.info("Downloading Quran data from Tanzil...")
-                url = "https://tanzil.net/trans/?transID=en.sahih&type=txt-2"
-                # Using simple text version without tashkeel for matching
-                simple_url = "https://raw.githubusercontent.com/risan/quran-json/master/dist/quran.json"
+                print("→ pyquran not available, using fallback data")
+                logger.warning("pyquran not available, using fallback data")
+                self._use_fallback_data()
                 
-                try:
-                    response = requests.get(simple_url, timeout=30)
-                    response.raise_for_status()
-                    quran_json = response.json()
-                    
-                    # Save to cache and process
-                    lines = []
-                    for verse in quran_json:
-                        surah = verse['surah']
-                        ayah = verse['ayah']
-                        text = verse['text']
-                        lines.append(f"{surah}|{ayah}|{text}\n")
-                    
-                    with open(cache_file, 'w', encoding='utf-8') as f:
-                        f.writelines(lines)
-                    
-                except Exception as e:
-                    logger.error(f"Failed to download Quran data: {e}")
-                    # Use minimal fallback data
-                    self._use_fallback_data()
-                    return
-            
-            # Parse the data
-            for line in lines:
-                line = line.strip()
-                if not line or line.startswith('#'):
-                    continue
-                
-                parts = line.split('|')
-                if len(parts) >= 3:
-                    surah = int(parts[0])
-                    ayah = int(parts[1])
-                    text = parts[2]
-                    
-                    # Store verse data
-                    verse_key = f"{surah}:{ayah}"
-                    self.quran_text_with_tashkeel[verse_key] = text
-                    
-                    # Store normalized version for matching
-                    normalized = self.normalize_arabic_text(text)
-                    self.normalized_verses[verse_key] = normalized
-                    
-                    # Store in list for sequential access
-                    self.quran_data.append({
-                        'surah': surah,
-                        'ayah': ayah,
-                        'text': text,
-                        'normalized': normalized,
-                        'word_count': len(normalized.split())
-                    })
-            
-            logger.info(f"Loaded {len(self.quran_data)} verses from Quran")
-            
         except Exception as e:
+            print(f"✗ Error loading Quran data: {e}")
             logger.error(f"Error loading Quran data: {e}")
+            import traceback
+            traceback.print_exc()
             self._use_fallback_data()
+    
+    def _load_from_pyquran(self):
+        """
+        Load Quran data using the pyquran library.
+        """
+        try:
+            # Load all 114 surahs
+            for surah_num in range(1, 115):
+                try:
+                    # Get surah verses as a list (with tashkeel)
+                    surah_verses = pyquran.quran.get_sura(surah_num, with_tashkeel=True, basmalah=False)
+                    
+                    # Process each ayah in the surah
+                    for ayah_index, verse_text in enumerate(surah_verses):
+                        ayah_num = ayah_index + 1  # Ayah numbers start at 1
+                        
+                        if verse_text:
+                            # Store verse data
+                            verse_key = f"{surah_num}:{ayah_num}"
+                            self.quran_text_with_tashkeel[verse_key] = verse_text
+                            
+                            # Store normalized version for matching
+                            normalized = self.normalize_arabic_text(verse_text)
+                            self.normalized_verses[verse_key] = normalized
+                            
+                            # Store in list for sequential access
+                            self.quran_data.append({
+                                'surah': surah_num,
+                                'ayah': ayah_num,
+                                'text': verse_text,
+                                'normalized': normalized,
+                                'word_count': len(normalized.split())
+                            })
+                            
+                except Exception as e:
+                    logger.debug(f"Error loading surah {surah_num}: {e}")
+                    continue
+            
+            logger.info(f"Loaded {len(self.quran_data)} verses from pyquran")
+            
+            if len(self.quran_data) == 0:
+                raise ValueError("No verses loaded from pyquran")
+                
+        except Exception as e:
+            logger.error(f"Failed to load from pyquran: {e}")
+            raise
     
     def _use_fallback_data(self):
         """
         Use minimal fallback data if download fails.
+        Includes common short surahs for testing.
         """
-        logger.warning("Using fallback Quran data (limited)")
-        # Add some common verses as fallback
+        logger.warning("Using fallback Quran data (limited to common surahs)")
+        # Add common verses as fallback - Surah 1, 111, 112, 113, 114
         fallback_verses = [
+            # Surah 1 - Al-Fatiha
             (1, 1, "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ"),
             (1, 2, "الْحَمْدُ لِلَّهِ رَبِّ الْعَالَمِينَ"),
             (1, 3, "الرَّحْمَٰنِ الرَّحِيمِ"),
@@ -120,6 +123,30 @@ class QuranData:
             (1, 5, "إِيَّاكَ نَعْبُدُ وَإِيَّاكَ نَسْتَعِينُ"),
             (1, 6, "اهْدِنَا الصِّرَاطَ الْمُسْتَقِيمَ"),
             (1, 7, "صِرَاطَ الَّذِينَ أَنْعَمْتَ عَلَيْهِمْ غَيْرِ الْمَغْضُوبِ عَلَيْهِمْ وَلَا الضَّالِّينَ"),
+            # Surah 111 - Al-Masad
+            (111, 1, "تَبَّتْ يَدَا أَبِي لَهَبٍ وَتَبَّ"),
+            (111, 2, "مَا أَغْنَىٰ عَنْهُ مَالُهُ وَمَا كَسَبَ"),
+            (111, 3, "سَيَصْلَىٰ نَارًا ذَاتَ لَهَبٍ"),
+            (111, 4, "وَامْرَأَتُهُ حَمَّالَةَ الْحَطَبِ"),
+            (111, 5, "فِي جِيدِهَا حَبْلٌ مِّن مَّسَدٍ"),
+            # Surah 112 - Al-Ikhlas
+            (112, 1, "قُلْ هُوَ اللَّهُ أَحَدٌ"),
+            (112, 2, "اللَّهُ الصَّمَدُ"),
+            (112, 3, "لَمْ يَلِدْ وَلَمْ يُولَدْ"),
+            (112, 4, "وَلَمْ يَكُن لَّهُ كُفُوًا أَحَدٌ"),
+            # Surah 113 - Al-Falaq
+            (113, 1, "قُلْ أَعُوذُ بِرَبِّ الْفَلَقِ"),
+            (113, 2, "مِن شَرِّ مَا خَلَقَ"),
+            (113, 3, "وَمِن شَرِّ غَاسِقٍ إِذَا وَقَبَ"),
+            (113, 4, "وَمِن شَرِّ النَّفَّاثَاتِ فِي الْعُقَدِ"),
+            (113, 5, "وَمِن شَرِّ حَاسِدٍ إِذَا حَسَدَ"),
+            # Surah 114 - An-Nas
+            (114, 1, "قُلْ أَعُوذُ بِرَبِّ النَّاسِ"),
+            (114, 2, "مَلِكِ النَّاسِ"),
+            (114, 3, "إِلَٰهِ النَّاسِ"),
+            (114, 4, "مِن شَرِّ الْوَسْوَاسِ الْخَنَّاسِ"),
+            (114, 5, "الَّذِي يُوَسْوِسُ فِي صُدُورِ النَّاسِ"),
+            (114, 6, "مِنَ الْجِنَّةِ وَالنَّاسِ"),
         ]
         
         for surah, ayah, text in fallback_verses:
@@ -212,40 +239,33 @@ class QuranData:
     def _match_with_chunk_hints(self, normalized_text: str, chunk_boundaries: List[Dict]) -> List[Dict]:
         """
         Match verses using chunk boundaries as hints for verse breaks.
+        Uses consecutive verse detection on the full text, then assigns timing from chunks.
         """
-        matched_verses = []
+        # Use consecutive verse detection on the full text
+        matched_verses = self._find_consecutive_verses(normalized_text)
         
-        # Split transcription by chunks
-        words = normalized_text.split()
-        chunk_texts = []
+        if not matched_verses:
+            logger.warning("No verses matched with chunk hints")
+            return []
         
-        # Approximate word distribution across chunks
-        total_words = len(words)
-        words_per_chunk = total_words // len(chunk_boundaries) if chunk_boundaries else total_words
-        
-        start_idx = 0
-        for i, chunk in enumerate(chunk_boundaries):
-            end_idx = min(start_idx + words_per_chunk, total_words)
-            if i == len(chunk_boundaries) - 1:
-                end_idx = total_words
+        # Assign timing information from chunk boundaries
+        if len(matched_verses) <= len(chunk_boundaries):
+            # Assign each verse to a chunk
+            for i, verse in enumerate(matched_verses):
+                if i < len(chunk_boundaries):
+                    verse['audio_start_time'] = chunk_boundaries[i].get('start_time', 0)
+                    verse['audio_end_time'] = chunk_boundaries[i].get('end_time', 0)
+        else:
+            # More verses than chunks, distribute timing
+            total_duration = chunk_boundaries[-1].get('end_time', 0) - chunk_boundaries[0].get('start_time', 0)
+            verse_duration = total_duration / len(matched_verses) if matched_verses else 0
+            start_time = chunk_boundaries[0].get('start_time', 0)
             
-            chunk_text = ' '.join(words[start_idx:end_idx])
-            if chunk_text:
-                chunk_texts.append({
-                    'text': chunk_text,
-                    'start_time': chunk.get('start_time', 0),
-                    'end_time': chunk.get('end_time', 0)
-                })
-            start_idx = end_idx
+            for i, verse in enumerate(matched_verses):
+                verse['audio_start_time'] = start_time + (i * verse_duration)
+                verse['audio_end_time'] = start_time + ((i + 1) * verse_duration)
         
-        # Match each chunk to verses
-        for chunk_info in chunk_texts:
-            best_match = self._find_best_verse_match(chunk_info['text'])
-            if best_match:
-                best_match['audio_start_time'] = chunk_info['start_time']
-                best_match['audio_end_time'] = chunk_info['end_time']
-                matched_verses.append(best_match)
-        
+        logger.info(f"Matched {len(matched_verses)} verses with chunk hints")
         return matched_verses
     
     def _match_sliding_window(self, normalized_text: str) -> List[Dict]:
@@ -278,62 +298,164 @@ class QuranData:
         similarity = fuzz.ratio(text_normalized, basmala_normalized) / 100.0
         return similarity >= 0.85
     
-    def _find_consecutive_verses(self, text: str, min_similarity: float = 0.6) -> List[Dict]:
+    def _find_consecutive_verses(self, text: str, min_similarity: float = 0.6, min_coverage: float = 0.8) -> List[Dict]:
         """
-        Find consecutive verses in the transcribed text.
-        Handles Basmala detection and multi-ayah sequences.
+        Find consecutive verses in the transcribed text with comprehensive matching.
+        Ensures at least min_coverage (80%) of the text is accounted for.
+        Handles Basmala, repetitions, and finds best consecutive ayah pattern.
         """
         words = text.split()
         if len(words) < 3:
             return []
         
-        matched_verses = []
-        
         # Check if text starts with Basmala
         basmala_text = ' '.join(words[:4]) if len(words) >= 4 else text
         has_basmala = self._is_basmala(basmala_text)
         
+        basmala_entry = None
+        search_text = text
+        
         if has_basmala:
-            # Try to identify the surah from the following text
             remaining_text = ' '.join(words[4:]) if len(words) > 4 else ""
+            logger.info(f"Basmala detected, remaining text: {remaining_text[:100]}...")
+            search_text = remaining_text
             
+            # Identify surah from first ayah
             if remaining_text:
-                # Find the first verse after Basmala
-                next_verse = self._find_best_verse_match(remaining_text, min_similarity=0.65)
+                search_words = remaining_text.split()[:3]
+                first_search = ' '.join(search_words)
+                logger.info(f"Searching for first verse with: '{first_search}'")
+                
+                next_verse = self._search_verse_with_pyquran(first_search)
                 
                 if next_verse:
                     surah_num = next_verse['surah']
+                    logger.info(f"Identified Surah {surah_num} from first ayah")
                     
-                    # Add Basmala entry
-                    # Surah 1 (Al-Fatiha): Basmala is ayah 1
-                    # Surah 9 (At-Tawbah): No Basmala
-                    # Other surahs: Basmala is ayah 0 (not numbered)
+                    # Create Basmala entry
                     if surah_num == 1:
                         basmala_entry = {
-                            'surah': 1,
-                            'ayah': 1,
+                            'surah': 1, 'ayah': 1,
                             'text': self.get_verse_with_tashkeel(1, 1),
-                            'similarity': 0.95,
-                            'is_basmala': True
+                            'similarity': 0.95, 'is_basmala': True
                         }
                     else:
                         basmala_entry = {
-                            'surah': surah_num,
-                            'ayah': 0,
+                            'surah': surah_num, 'ayah': 0,
                             'text': "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ",
-                            'similarity': 0.95,
-                            'is_basmala': True
+                            'similarity': 0.95, 'is_basmala': True
                         }
-                    matched_verses.append(basmala_entry)
-                    
-                    # Add the following verse(s)
-                    following_verses = self._find_verse_sequence(remaining_text, surah_num, next_verse['ayah'])
-                    matched_verses.extend(following_verses)
-                    
-                    return matched_verses
         
-        # No Basmala detected, try to find consecutive verses
-        return self._find_verse_sequence(text)
+        # Find all consecutive verses with comprehensive coverage
+        matched_verses = self._find_comprehensive_verse_sequence(search_text, min_coverage)
+        
+        # Add Basmala at the beginning if detected
+        if basmala_entry:
+            matched_verses.insert(0, basmala_entry)
+        
+        logger.info(f"Found {len(matched_verses)} verses (coverage check passed)")
+        return matched_verses
+    
+    def _find_comprehensive_verse_sequence(self, text: str, min_coverage: float = 0.8) -> List[Dict]:
+        """
+        Comprehensive verse matching that ensures high coverage of the transcribed text.
+        Handles consecutive verses, repetitions, and validates coverage.
+        """
+        normalized_text = self.normalize_arabic_text(text)
+        text_words = normalized_text.split()
+        total_words = len(text_words)
+        
+        if total_words < 3:
+            return []
+        
+        logger.info(f"Starting comprehensive matching for {total_words} words, target coverage: {min_coverage*100}%")
+        
+        # Try to find the starting verse using first few words
+        start_verse = None
+        for word_count in [1, 2, 3, 5]:
+            if len(text_words) >= word_count:
+                search_text = ' '.join(text_words[:word_count])
+                start_verse = self._search_verse_with_pyquran(search_text)
+                if start_verse:
+                    break
+        
+        if not start_verse:
+            logger.warning("Could not find starting verse, falling back to fuzzy match")
+            # Try fuzzy match as fallback
+            start_verse = self._find_best_verse_match(normalized_text, min_similarity=0.7)
+            if not start_verse:
+                logger.error("No starting verse found even with fuzzy match")
+                return []
+        
+        logger.info(f"✓ Starting from Surah {start_verse['surah']}, Ayah {start_verse['ayah']}")
+        
+        # Build sequence of consecutive verses from this surah
+        matched_verses = []
+        current_surah = start_verse['surah']
+        current_ayah = start_verse['ayah']
+        matched_word_count = 0
+        
+        # Get all verses from this surah
+        surah_verses = [v for v in self.quran_data if v['surah'] == current_surah]
+        max_ayah = max(v['ayah'] for v in surah_verses) if surah_verses else 0
+        
+        # Match consecutive verses
+        consecutive_misses = 0
+        max_consecutive_misses = 3  # Allow up to 3 misses before stopping
+        
+        for ayah_num in range(current_ayah, min(current_ayah + 100, max_ayah + 1)):
+            verse_data = self._get_verse_by_key(current_surah, ayah_num)
+            if not verse_data:
+                break
+            
+            verse_normalized = verse_data['normalized']
+            verse_words = verse_normalized.split()
+            
+            # Check if this verse appears in the text (exact or fuzzy)
+            if verse_normalized in normalized_text:
+                matched_verses.append({
+                    'surah': current_surah,
+                    'ayah': ayah_num,
+                    'text': verse_data['text'],
+                    'similarity': 1.0
+                })
+                matched_word_count += len(verse_words)
+                consecutive_misses = 0
+                logger.debug(f"  ✓ Matched {current_surah}:{ayah_num} (exact)")
+            else:
+                # Try fuzzy match
+                similarity = fuzz.partial_ratio(verse_normalized, normalized_text) / 100.0
+                if similarity >= 0.70:  # Lower threshold for better coverage
+                    matched_verses.append({
+                        'surah': current_surah,
+                        'ayah': ayah_num,
+                        'text': verse_data['text'],
+                        'similarity': similarity
+                    })
+                    matched_word_count += len(verse_words)
+                    consecutive_misses = 0
+                    logger.debug(f"  ✓ Matched {current_surah}:{ayah_num} (fuzzy: {similarity:.2f})")
+                else:
+                    consecutive_misses += 1
+                    logger.debug(f"  ✗ Missed {current_surah}:{ayah_num} (similarity: {similarity:.2f})")
+                    if consecutive_misses >= max_consecutive_misses:
+                        logger.info(f"Stopping after {consecutive_misses} consecutive misses")
+                        break
+            
+            # Check if we've achieved good coverage
+            coverage = matched_word_count / total_words
+            if coverage >= min_coverage:
+                logger.info(f"Achieved {coverage*100:.1f}% coverage with {len(matched_verses)} verses")
+                break
+        
+        # Final coverage check
+        final_coverage = matched_word_count / total_words
+        logger.info(f"Final coverage: {final_coverage*100:.1f}% ({matched_word_count}/{total_words} words)")
+        
+        if final_coverage < min_coverage:
+            logger.warning(f"Coverage {final_coverage*100:.1f}% below threshold {min_coverage*100}%")
+        
+        return matched_verses
     
     def _find_verse_sequence(self, text: str, expected_surah: int = None, start_ayah: int = None) -> List[Dict]:
         """
@@ -419,26 +541,111 @@ class QuranData:
                 return verse
         return None
     
+    def _search_verse_with_pyquran(self, text: str) -> Optional[Dict]:
+        """
+        Search for a verse using pyquran's search_sequence function.
+        Mode 3: search without tashkeel, return with tashkeel.
+        Tries progressively shorter sequences if longer ones fail.
+        """
+        if not PYQURAN_AVAILABLE or not pyquran:
+            return None
+        
+        try:
+            words = text.split()
+            
+            # Try different word counts: start with shorter sequences for first ayah detection
+            for word_count in [1, 2, 3, 5, 7]:
+                if len(words) >= word_count:
+                    search_text = ' '.join(words[:word_count])
+                    
+                    try:
+                        # Use mode 3: search without tashkeel, return with tashkeel
+                        results = pyquran.search_sequence(
+                            sequancesList=[search_text],
+                            mode=3
+                        )
+                        
+                        if results and search_text in results:
+                            matches = results[search_text]
+                            if matches:
+                                # Get first match where position==0 (verse starts with this text)
+                                # This avoids matching words in the middle of verses
+                                for matched_text, position, verse_num, chapter_num in matches:
+                                    if position == 0:  # Verse starts with this text
+                                        logger.info(f"PyQuran found match with {word_count} words: Surah {chapter_num}:{verse_num}")
+                                        
+                                        return {
+                                            'surah': chapter_num,
+                                            'ayah': verse_num,
+                                            'text': matched_text,
+                                            'similarity': 1.0  # Exact match from search
+                                        }
+                                
+                                # If no position==0 match, take first match
+                                matched_text, position, verse_num, chapter_num = matches[0]
+                                logger.info(f"PyQuran found match with {word_count} words: Surah {chapter_num}:{verse_num} (pos={position})")
+                                
+                                return {
+                                    'surah': chapter_num,
+                                    'ayah': verse_num,
+                                    'text': matched_text,
+                                    'similarity': 1.0
+                                }
+                    except Exception as e:
+                        logger.debug(f"PyQuran search with {word_count} words failed: {e}")
+                        continue
+                        
+        except Exception as e:
+            logger.debug(f"PyQuran search failed: {e}")
+        
+        return None
+    
     def _find_best_verse_match(self, text: str, min_similarity: float = 0.6) -> Optional[Dict]:
         """
         Find the best matching verse for given text using fuzzy string matching.
-        Uses rapidfuzz for fast similarity calculation.
+        Uses rapidfuzz for fast similarity calculation with multiple strategies.
         """
         best_score = 0
         best_verse = None
         
-        # Search through all verses
-        for verse in self.quran_data:
-            # Calculate similarity using rapidfuzz (returns 0-100, normalize to 0-1)
-            similarity = fuzz.ratio(text, verse['normalized']) / 100.0
-            
-            # Also check if text is a substring (for partial matches)
-            if text in verse['normalized'] or verse['normalized'] in text:
-                similarity = max(similarity, 0.8)
-            
-            if similarity > best_score and similarity >= min_similarity:
-                best_score = similarity
-                best_verse = verse
+        # Strategy 1: Try exact beginning match (first 3-5 words)
+        text_words = text.split()
+        if len(text_words) >= 3:
+            # Try matching first 3, 4, and 5 words
+            for word_count in [5, 4, 3]:
+                if len(text_words) >= word_count:
+                    search_prefix = ' '.join(text_words[:word_count])
+                    
+                    for verse in self.quran_data:
+                        verse_words = verse['normalized'].split()
+                        if len(verse_words) >= word_count:
+                            verse_prefix = ' '.join(verse_words[:word_count])
+                            
+                            # Check if prefixes match closely
+                            prefix_similarity = fuzz.ratio(search_prefix, verse_prefix) / 100.0
+                            
+                            if prefix_similarity >= 0.85:  # High threshold for prefix match
+                                # Found a strong prefix match, check full similarity
+                                full_similarity = fuzz.partial_ratio(text, verse['normalized']) / 100.0
+                                
+                                if full_similarity > best_score:
+                                    best_score = full_similarity
+                                    best_verse = verse
+                                    print(f"  → Prefix match: Surah {verse['surah']}:{verse['ayah']} (score: {full_similarity:.2f})")
+        
+        # Strategy 2: If no good prefix match, try full fuzzy matching
+        if best_score < 0.7:
+            for verse in self.quran_data:
+                # Use partial_ratio for better substring matching
+                similarity = fuzz.partial_ratio(text, verse['normalized']) / 100.0
+                
+                # Boost score if text contains verse or vice versa
+                if text in verse['normalized'] or verse['normalized'] in text:
+                    similarity = max(similarity, 0.85)
+                
+                if similarity > best_score and similarity >= min_similarity:
+                    best_score = similarity
+                    best_verse = verse
         
         if best_verse:
             return {

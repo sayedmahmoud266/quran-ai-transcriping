@@ -12,3 +12,5 @@ python-dotenv==1.0.0
 pyarabic==0.6.15
 rapidfuzz==3.5.2
 requests==2.31.0
+pyquran==1.0.1
+resampy==0.4.2
