@@ -320,37 +320,29 @@ class QuranData:
             logger.info(f"Basmala detected, remaining text: {remaining_text[:100]}...")
             search_text = remaining_text
             
-            # Identify surah from first ayah
-            if remaining_text:
-                search_words = remaining_text.split()[:3]
-                first_search = ' '.join(search_words)
-                logger.info(f"Searching for first verse with: '{first_search}'")
-                
-                next_verse = self._search_verse_with_pyquran(first_search)
-                
-                if next_verse:
-                    surah_num = next_verse['surah']
-                    logger.info(f"Identified Surah {surah_num} from first ayah")
-                    
-                    # Create Basmala entry
-                    if surah_num == 1:
-                        basmala_entry = {
-                            'surah': 1, 'ayah': 1,
-                            'text': self.get_verse_with_tashkeel(1, 1),
-                            'similarity': 0.95, 'is_basmala': True
-                        }
-                    else:
-                        basmala_entry = {
-                            'surah': surah_num, 'ayah': 0,
-                            'text': "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ",
-                            'similarity': 0.95, 'is_basmala': True
-                        }
+            # Don't create Basmala entry yet - let constraint propagation determine the surah
+            # This will be added after we know the correct surah
         
         # Find all consecutive verses with comprehensive coverage
         matched_verses = self._find_comprehensive_verse_sequence(search_text, min_coverage)
         
-        # Add Basmala at the beginning if detected
-        if basmala_entry:
+        # Add Basmala at the beginning if detected and we found verses
+        if has_basmala and matched_verses:
+            surah_num = matched_verses[0]['surah']
+            logger.info(f"Adding Basmala for Surah {surah_num}")
+            
+            if surah_num == 1:
+                basmala_entry = {
+                    'surah': 1, 'ayah': 1,
+                    'text': self.get_verse_with_tashkeel(1, 1),
+                    'similarity': 0.95, 'is_basmala': True
+                }
+            else:
+                basmala_entry = {
+                    'surah': surah_num, 'ayah': 0,
+                    'text': "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ",
+                    'similarity': 0.95, 'is_basmala': True
+                }
             matched_verses.insert(0, basmala_entry)
         
         logger.info(f"Found {len(matched_verses)} verses (coverage check passed)")
@@ -358,8 +350,8 @@ class QuranData:
     
     def _find_comprehensive_verse_sequence(self, text: str, min_coverage: float = 0.8) -> List[Dict]:
         """
-        Comprehensive verse matching that ensures high coverage of the transcribed text.
-        Handles consecutive verses, repetitions, and validates coverage.
+        Comprehensive verse matching using constraint propagation.
+        Progressively narrows down possibilities by intersecting matches from consecutive batches.
         """
         normalized_text = self.normalize_arabic_text(text)
         text_words = normalized_text.split()
@@ -368,32 +360,31 @@ class QuranData:
         if total_words < 3:
             return []
         
-        logger.info(f"Starting comprehensive matching for {total_words} words, target coverage: {min_coverage*100}%")
+        logger.info(f"Starting constraint propagation matching for {total_words} words")
         
-        # Try to find the starting verse using first few words
-        start_verse = None
-        for word_count in [1, 2, 3, 5]:
-            if len(text_words) >= word_count:
-                search_text = ' '.join(text_words[:word_count])
-                start_verse = self._search_verse_with_pyquran(search_text)
-                if start_verse:
-                    break
+        # Use constraint propagation to find the correct surah and starting ayah
+        surah_num, start_ayah = self._find_surah_by_constraint_propagation(text_words)
         
-        if not start_verse:
-            logger.warning("Could not find starting verse, falling back to fuzzy match")
-            # Try fuzzy match as fallback
-            start_verse = self._find_best_verse_match(normalized_text, min_similarity=0.7)
-            if not start_verse:
-                logger.error("No starting verse found even with fuzzy match")
-                return []
+        if not surah_num:
+            logger.error("Could not determine surah using constraint propagation")
+            return []
         
-        logger.info(f"✓ Starting from Surah {start_verse['surah']}, Ayah {start_verse['ayah']}")
+        logger.info(f"✓ Determined Surah {surah_num}, starting from Ayah {start_ayah}")
+        
+        # Check if we need to fill backward gaps (missing ayahs before start_ayah)
+        # This happens when constraint propagation starts from ayah 4 but ayahs 1-3 are missing
+        backward_verses = self._fill_backward_gaps(normalized_text, surah_num, start_ayah)
+        
+        original_start_ayah = start_ayah
+        if backward_verses:
+            logger.info(f"Filled {len(backward_verses)} backward gaps before ayah {start_ayah}")
+            # Don't update start_ayah - we'll continue from original start_ayah in forward loop
         
         # Build sequence of consecutive verses from this surah
-        matched_verses = []
-        current_surah = start_verse['surah']
-        current_ayah = start_verse['ayah']
-        matched_word_count = 0
+        matched_verses = backward_verses if backward_verses else []
+        current_surah = surah_num
+        current_ayah = original_start_ayah  # Start forward matching from original position
+        matched_word_count = sum(len(v['text'].split()) for v in matched_verses)
         
         # Get all verses from this surah
         surah_verses = [v for v in self.quran_data if v['surah'] == current_surah]
@@ -401,7 +392,7 @@ class QuranData:
         
         # Match consecutive verses
         consecutive_misses = 0
-        max_consecutive_misses = 3  # Allow up to 3 misses before stopping
+        max_consecutive_misses = 5  # Allow up to 5 misses before stopping (for repeated phrases)
         
         for ayah_num in range(current_ayah, min(current_ayah + 100, max_ayah + 1)):
             verse_data = self._get_verse_by_key(current_surah, ayah_num)
@@ -441,12 +432,6 @@ class QuranData:
                     if consecutive_misses >= max_consecutive_misses:
                         logger.info(f"Stopping after {consecutive_misses} consecutive misses")
                         break
-            
-            # Check if we've achieved good coverage
-            coverage = matched_word_count / total_words
-            if coverage >= min_coverage:
-                logger.info(f"Achieved {coverage*100:.1f}% coverage with {len(matched_verses)} verses")
-                break
         
         # Final coverage check
         final_coverage = matched_word_count / total_words
@@ -531,6 +516,151 @@ class QuranData:
                 break
         
         return matched_verses if matched_verses else ([first_match] if first_match else [])
+    
+    def _fill_backward_gaps(self, normalized_text: str, surah_num: int, start_ayah: int) -> List[Dict]:
+        """
+        Fill backward gaps by matching ayahs before start_ayah.
+        Works backward from start_ayah-1 to ayah 1, matching verses in the text.
+        """
+        if start_ayah <= 1:
+            return []  # No gaps to fill
+        
+        logger.info(f"Checking for backward gaps before ayah {start_ayah}")
+        
+        backward_matches = []
+        
+        # Try to match ayahs from start_ayah-1 down to 1
+        for ayah_num in range(start_ayah - 1, 0, -1):
+            verse_data = self._get_verse_by_key(surah_num, ayah_num)
+            if not verse_data:
+                continue
+            
+            verse_normalized = verse_data['normalized']
+            
+            # Check if this verse appears in the text
+            if verse_normalized in normalized_text:
+                backward_matches.insert(0, {
+                    'surah': surah_num,
+                    'ayah': ayah_num,
+                    'text': verse_data['text'],
+                    'similarity': 1.0
+                })
+                logger.info(f"  ✓ Found backward match: {surah_num}:{ayah_num} (exact)")
+            else:
+                # Try fuzzy match
+                similarity = fuzz.partial_ratio(verse_normalized, normalized_text) / 100.0
+                if similarity >= 0.75:
+                    backward_matches.insert(0, {
+                        'surah': surah_num,
+                        'ayah': ayah_num,
+                        'text': verse_data['text'],
+                        'similarity': similarity
+                    })
+                    logger.info(f"  ✓ Found backward match: {surah_num}:{ayah_num} (fuzzy: {similarity:.2f})")
+                else:
+                    # Stop if we can't match - don't want to add incorrect verses
+                    logger.debug(f"  ✗ Stopped backward fill at ayah {ayah_num} (similarity: {similarity:.2f})")
+                    break
+        
+        return backward_matches
+    
+    def _find_surah_by_constraint_propagation(self, text_words: List[str], max_batches: int = 5) -> Tuple[Optional[int], Optional[int]]:
+        """
+        Use constraint propagation to determine the surah and starting ayah.
+        Searches multiple batches and intersects results to narrow down possibilities.
+        
+        Returns:
+            Tuple of (surah_number, start_ayah_number) or (None, None) if not found
+        """
+        if not PYQURAN_AVAILABLE or not pyquran:
+            return None, None
+        
+        # Collect candidates from multiple batches
+        all_candidates = []
+        batch_size = 5  # words per batch
+        
+        for batch_idx in range(min(max_batches, len(text_words) // batch_size)):
+            start_idx = batch_idx * batch_size
+            end_idx = start_idx + batch_size
+            batch_words = text_words[start_idx:end_idx]
+            
+            # Try different word counts within this batch
+            batch_candidates = []
+            for word_count in [1, 2, 3, 4, 5]:
+                if len(batch_words) >= word_count:
+                    search_text = ' '.join(batch_words[:word_count])
+                    
+                    try:
+                        results = pyquran.search_sequence(sequancesList=[search_text], mode=3)
+                        
+                        if results and search_text in results:
+                            matches = results[search_text]
+                            # Collect all matches with position==0 (verse starts with this)
+                            for matched_text, position, verse_num, chapter_num in matches:
+                                if position == 0:
+                                    batch_candidates.append({
+                                        'surah': chapter_num,
+                                        'ayah': verse_num,
+                                        'batch_idx': batch_idx,
+                                        'text': matched_text
+                                    })
+                    except:
+                        continue
+            
+            if batch_candidates:
+                all_candidates.append(batch_candidates)
+                logger.info(f"Batch {batch_idx}: Found {len(batch_candidates)} candidates")
+        
+        if not all_candidates:
+            logger.warning("No candidates found in any batch")
+            return None, None
+        
+        # Constraint propagation: intersect candidates
+        logger.info(f"Starting constraint propagation with {len(all_candidates)} batches")
+        
+        # Start with first batch candidates
+        possible_sequences = []
+        for candidate in all_candidates[0]:
+            possible_sequences.append([candidate])
+        
+        # For each subsequent batch, try to extend sequences
+        for batch_idx in range(1, len(all_candidates)):
+            new_sequences = []
+            
+            for sequence in possible_sequences:
+                last_match = sequence[-1]
+                expected_surah = last_match['surah']
+                expected_ayah_min = last_match['ayah']
+                expected_ayah_max = last_match['ayah'] + 5  # Allow up to 5 ayahs gap
+                
+                # Try to find a match in current batch that continues this sequence
+                for candidate in all_candidates[batch_idx]:
+                    # Check if this candidate is from the same surah and consecutive/repeated ayah
+                    if candidate['surah'] == expected_surah:
+                        if expected_ayah_min <= candidate['ayah'] <= expected_ayah_max:
+                            # Valid continuation
+                            new_sequence = sequence + [candidate]
+                            new_sequences.append(new_sequence)
+            
+            if new_sequences:
+                possible_sequences = new_sequences
+                logger.info(f"After batch {batch_idx}: {len(possible_sequences)} possible sequences")
+            else:
+                logger.warning(f"No valid sequences after batch {batch_idx}, keeping previous")
+                break
+        
+        if not possible_sequences:
+            logger.warning("No valid sequences found")
+            return None, None
+        
+        # Pick the longest/best sequence
+        best_sequence = max(possible_sequences, key=len)
+        surah_num = best_sequence[0]['surah']
+        start_ayah = best_sequence[0]['ayah']
+        
+        logger.info(f"✓ Constraint propagation result: Surah {surah_num}, Ayah {start_ayah} ({len(best_sequence)} batches matched)")
+        
+        return surah_num, start_ayah
     
     def _get_verse_by_key(self, surah: int, ayah: int) -> Optional[Dict]:
         """
