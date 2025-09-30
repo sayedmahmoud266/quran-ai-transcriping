@@ -10,7 +10,7 @@ from typing import List, Dict, Optional, Tuple
 from difflib import SequenceMatcher
 import requests
 import pyarabic.araby as araby
-from Levenshtein import ratio as levenshtein_ratio
+from rapidfuzz import fuzz
 import logging
 
 logger = logging.getLogger(__name__)
@@ -259,15 +259,16 @@ class QuranData:
     
     def _find_best_verse_match(self, text: str, min_similarity: float = 0.6) -> Optional[Dict]:
         """
-        Find the best matching verse for given text using Levenshtein distance.
+        Find the best matching verse for given text using fuzzy string matching.
+        Uses rapidfuzz for fast similarity calculation.
         """
         best_score = 0
         best_verse = None
         
         # Search through all verses
         for verse in self.quran_data:
-            # Calculate similarity
-            similarity = levenshtein_ratio(text, verse['normalized'])
+            # Calculate similarity using rapidfuzz (returns 0-100, normalize to 0-1)
+            similarity = fuzz.ratio(text, verse['normalized']) / 100.0
             
             # Also check if text is a substring (for partial matches)
             if text in verse['normalized'] or verse['normalized'] in text:

@@ -10,5 +10,5 @@ soundfile==0.12.1
 numpy<2.0.0
 python-dotenv==1.0.0
 pyarabic==0.6.15
-python-Levenshtein==0.21.1
+rapidfuzz==3.5.2
 requests==2.31.0
