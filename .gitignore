@@ -50,6 +50,9 @@ models/
 temp/
 uploads/
 
+# Quran data cache
+quran_simple.txt
+
 # Environment variables
 .env
 .env.local

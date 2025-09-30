@@ -2,6 +2,29 @@
 
 All notable changes to the Quran AI Transcription API project.
 
+## [1.2.0] - 2025-10-01
+
+### Added
+- **Quran Verse Matching**: Integrated full Quran database with fuzzy text matching
+  - Automatic download of complete Quran text (6,236 verses)
+  - Local caching for faster subsequent loads
+  - Levenshtein distance-based similarity scoring
+  - Chunk-boundary hints for better verse detection
+  - Confidence scores for each matched verse
+- New dependencies: `pyarabic`, `python-Levenshtein`, `requests`
+- Comprehensive verse matching documentation (`docs/verse_matching.md`)
+- Fallback Quran data (Surah Al-Fatiha) if download fails
+
+### Changed
+- Updated response format to include `match_confidence` field
+- Modified `_create_verse_details()` to use real verse matching
+- Enhanced `quran_data.py` with complete verse database and matching algorithms
+- Improved logging to show matched verses with confidence scores
+
+### Fixed
+- Verse matching now returns actual surah and ayah numbers instead of placeholders
+- Better handling of verses with and without diacritics
+
 ## [1.1.0] - 2025-10-01
 
 ### Added

@@ -6,9 +6,10 @@ A Python-based HTTP API for transcribing Quran recitations from audio files usin
 
 - **Multi-format Audio Support**: Accepts various audio formats (MP3, WAV, M4A, WMA, AAC, FLAC, OGG, OPUS, WebM)
 - **Intelligent Audio Chunking**: Automatically splits audio by silence detection for improved accuracy
+- **Accurate Verse Matching**: Uses fuzzy matching with Quran database to identify exact surah and ayah
 - **Automatic Audio Processing**: Handles different sample rates and converts to the required format
 - **Fast Transcription**: Uses the fine-tuned Whisper model optimized for Quran recitations
-- **Detailed Output**: Returns transcription with verse details and timestamps
+- **Detailed Output**: Returns transcription with verse details, timestamps, and confidence scores
 - **RESTful API**: Simple HTTP API built with FastAPI
 
 ## Requirements
@@ -112,12 +113,15 @@ POST /transcribe
         "start_from_word": 1,
         "end_to_word": 4,
         "audio_start_timestamp": "00:00:00.000",
-        "audio_end_timestamp": "00:00:03.500"
+        "audio_end_timestamp": "00:00:03.500",
+        "match_confidence": 0.95
       }
     ]
   }
 }
 ```
+
+**Note**: `match_confidence` indicates how well the transcription matches the identified verse (0.0 to 1.0, where 1.0 is perfect match).
 
 ### Example Usage
 
@@ -193,13 +197,17 @@ For more details, see [docs/model_readme.md](docs/model_readme.md)
 
 The API runs with auto-reload enabled by default when using the run script, which means changes to the code will automatically restart the server.
 
-### Adding Quran Database Integration
+### Quran Verse Matching
 
-The current implementation includes placeholder logic for verse matching. To add proper Quran verse matching:
+The application now includes full Quran verse matching:
 
-1. Integrate a Quran database (e.g., Tanzil, quran-json)
-2. Update `app/quran_data.py` with actual verse matching logic
-3. Implement fuzzy matching for better verse detection
+- **Automatic Download**: Quran text is downloaded from GitHub on first run
+- **Local Caching**: Quran data is cached locally for faster subsequent loads
+- **Fuzzy Matching**: Uses Levenshtein distance for accurate verse identification
+- **Chunk-based Detection**: Uses audio chunk boundaries as hints for verse breaks
+- **Confidence Scores**: Returns match confidence for each identified verse
+
+The Quran data is loaded from [quran-json](https://github.com/risan/quran-json) and cached in `quran_simple.txt`.
 
 ### Performance Optimization
 

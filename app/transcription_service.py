@@ -102,8 +102,10 @@ class TranscriptionService:
             
             logger.info(f"Combined transcription: {combined_transcription}")
             
-            # Match verses and create detailed response
-            details = self._create_verse_details(combined_transcription, combined_timestamps)
+            # Match verses using chunk boundaries as hints
+            chunk_info = [{"start_time": r["chunk_start_time"], "end_time": r.get("chunk_end_time", 0)} 
+                         for r in chunk_results]
+            details = self._create_verse_details(combined_transcription, combined_timestamps, chunk_info)
             
             return {
                 "success": True,
@@ -183,7 +185,8 @@ class TranscriptionService:
                 "transcription": transcription,
                 "timestamps": timestamps,
                 "chunk_index": chunk_index,
-                "chunk_start_time": chunk_start_time
+                "chunk_start_time": chunk_start_time,
+                "chunk_end_time": chunk_start_time + chunk_duration
             }
             
         except Exception as e:
@@ -248,51 +251,77 @@ class TranscriptionService:
         return timestamps
     
     def _create_verse_details(self, transcription: str, 
-                            timestamps: List[Dict]) -> List[Dict]:
+                            timestamps: List[Dict],
+                            chunk_boundaries: List[Dict] = None) -> List[Dict]:
         """
         Create detailed verse information from transcription and timestamps.
+        Uses Quran database for accurate verse matching.
         
         Args:
             transcription: Full transcription text
             timestamps: Word-level timestamps
+            chunk_boundaries: Audio chunk boundaries as hints for verse detection
             
         Returns:
             List of verse detail dictionaries
         """
-        # This is a simplified implementation
-        # In production, use proper Quran verse matching with a database
-        
-        # For demonstration, we'll create a basic structure
-        # In reality, you'd match the transcription against a Quran database
-        
         if not timestamps:
             return []
         
-        # Example: Treat the entire transcription as one verse
-        # In production, split by actual verse boundaries
-        details = []
+        # Use Quran data to match verses
+        matched_verses = quran_data.match_verses(transcription, chunk_boundaries)
         
-        # This is placeholder logic - replace with actual verse matching
-        # using a proper Quran database (e.g., tanzil, quran-json)
-        
-        # For now, create a single entry as an example
-        if transcription.strip():
+        if not matched_verses:
+            logger.warning("No verses matched, returning transcription as-is")
+            # Fallback: return transcription without verse matching
             start_time = timestamps[0]["start"] if timestamps else 0.0
             end_time = timestamps[-1]["end"] if timestamps else 0.0
             
-            # Placeholder verse details
-            # In production, match transcription to actual Quran verses
-            detail = {
-                "surah_number": 1,  # Placeholder
-                "ayah_number": 1,   # Placeholder
-                "ayah_text_tashkeel": transcription,  # Should be matched to actual verse
+            return [{
+                "surah_number": 0,
+                "ayah_number": 0,
+                "ayah_text_tashkeel": transcription,
                 "ayah_word_count": len(transcription.split()),
                 "start_from_word": 1,
                 "end_to_word": len(transcription.split()),
                 "audio_start_timestamp": quran_data._format_timestamp(start_time),
-                "audio_end_timestamp": quran_data._format_timestamp(end_time)
+                "audio_end_timestamp": quran_data._format_timestamp(end_time),
+                "match_confidence": 0.0
+            }]
+        
+        # Create details from matched verses
+        details = []
+        for matched in matched_verses:
+            surah = matched['surah']
+            ayah = matched['ayah']
+            verse_text = matched['text']
+            
+            # Get timing info
+            start_time = matched.get('audio_start_time', 0.0)
+            end_time = matched.get('audio_end_time', 0.0)
+            
+            # If no timing from matching, use overall timestamps
+            if start_time == 0.0 and end_time == 0.0 and timestamps:
+                start_time = timestamps[0]["start"]
+                end_time = timestamps[-1]["end"]
+            
+            # Count words in the verse
+            word_count = quran_data.count_words(verse_text)
+            
+            detail = {
+                "surah_number": surah,
+                "ayah_number": ayah,
+                "ayah_text_tashkeel": verse_text,
+                "ayah_word_count": word_count,
+                "start_from_word": 1,
+                "end_to_word": word_count,
+                "audio_start_timestamp": quran_data._format_timestamp(start_time),
+                "audio_end_timestamp": quran_data._format_timestamp(end_time),
+                "match_confidence": matched.get('similarity', 0.0)
             }
             details.append(detail)
+            
+            logger.info(f"Matched: Surah {surah}, Ayah {ayah} (confidence: {matched.get('similarity', 0.0):.2f})")
         
         return details
 
