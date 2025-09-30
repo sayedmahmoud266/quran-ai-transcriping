@@ -2,10 +2,10 @@ fastapi==0.104.1
 uvicorn[standard]==0.24.0
 python-multipart==0.0.6
 transformers==4.35.2
-torch==2.1.1
-torchaudio==2.1.1
+torch>=2.2.0
+torchaudio>=2.2.0
 pydub==0.25.1
 librosa==0.10.1
 soundfile==0.12.1
-numpy==1.24.3
+numpy<2.0.0
 python-dotenv==1.0.0

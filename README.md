@@ -5,6 +5,7 @@ A Python-based HTTP API for transcribing Quran recitations from audio files usin
 ## Features
 
 - **Multi-format Audio Support**: Accepts various audio formats (MP3, WAV, M4A, WMA, AAC, FLAC, OGG, OPUS, WebM)
+- **Intelligent Audio Chunking**: Automatically splits audio by silence detection for improved accuracy
 - **Automatic Audio Processing**: Handles different sample rates and converts to the required format
 - **Fast Transcription**: Uses the fine-tuned Whisper model optimized for Quran recitations
 - **Detailed Output**: Returns transcription with verse details and timestamps
@@ -165,8 +166,10 @@ fetch('http://localhost:8000/transcribe', {
 │   ├── transcription_service.py   # Transcription logic
 │   └── quran_data.py             # Quran verse matching utilities
 ├── docs/
-│   ├── model_readme.md           # Model documentation
-│   └── api_documentation.md      # API documentation
+│   ├── model_readme.md              # Model documentation
+│   ├── api_documentation.md         # API documentation
+│   ├── implementation.md            # Technical implementation details
+│   └── chunking_implementation.md   # Audio chunking documentation
 ├── .gitignore
 ├── requirements.txt              # Python dependencies
 ├── setup.sh                      # Setup script
@@ -203,6 +206,9 @@ The current implementation includes placeholder logic for verse matching. To add
 - **GPU Acceleration**: The API automatically uses GPU if available (CUDA)
 - **Model Caching**: The model is loaded once at startup and reused for all requests
 - **Async Processing**: FastAPI handles requests asynchronously for better throughput
+- **Smart Chunking**: Audio is split by silence detection for better accuracy and memory efficiency
+
+For more details on the chunking implementation, see [docs/chunking_implementation.md](docs/chunking_implementation.md)
 
 ## Troubleshooting
 
