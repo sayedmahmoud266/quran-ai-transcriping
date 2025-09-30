@@ -98,7 +98,7 @@ POST /transcribe
 - OPUS (.opus)
 - WebM (.webm)
 
-**Response Format:**
+**Response Format (Single Verse):**
 ```json
 {
   "success": true,
@@ -114,14 +114,55 @@ POST /transcribe
         "end_to_word": 4,
         "audio_start_timestamp": "00:00:00.000",
         "audio_end_timestamp": "00:00:03.500",
-        "match_confidence": 0.95
+        "match_confidence": 0.95,
+        "is_basmala": true
       }
     ]
   }
 }
 ```
 
-**Note**: `match_confidence` indicates how well the transcription matches the identified verse (0.0 to 1.0, where 1.0 is perfect match).
+**Response Format (Multiple Consecutive Verses):**
+```json
+{
+  "success": true,
+  "data": {
+    "exact_transcription": "بسم الله الرحمن الرحيم الحمد لله رب العالمين",
+    "details": [
+      {
+        "surah_number": 1,
+        "ayah_number": 1,
+        "ayah_text_tashkeel": "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ",
+        "ayah_word_count": 4,
+        "start_from_word": 1,
+        "end_to_word": 4,
+        "audio_start_timestamp": "00:00:00.000",
+        "audio_end_timestamp": "00:00:02.000",
+        "match_confidence": 0.95,
+        "is_basmala": true
+      },
+      {
+        "surah_number": 1,
+        "ayah_number": 2,
+        "ayah_text_tashkeel": "الْحَمْدُ لِلَّهِ رَبِّ الْعَالَمِينَ",
+        "ayah_word_count": 4,
+        "start_from_word": 1,
+        "end_to_word": 4,
+        "audio_start_timestamp": "00:00:02.000",
+        "audio_end_timestamp": "00:00:04.500",
+        "match_confidence": 0.92
+      }
+    ]
+  }
+}
+```
+
+**Notes**: 
+- `match_confidence` indicates how well the transcription matches the identified verse (0.0 to 1.0, where 1.0 is perfect match)
+- `is_basmala: true` indicates this is the Basmala (بسم الله الرحمن الرحيم)
+- For Surah 1 (Al-Fatiha), Basmala has `ayah_number: 1`
+- For other surahs, Basmala has `ayah_number: 0` (not officially numbered)
+- Multiple consecutive ayahs are automatically detected and returned
 
 ### Example Usage
 

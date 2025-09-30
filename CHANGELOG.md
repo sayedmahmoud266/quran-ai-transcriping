@@ -2,6 +2,31 @@
 
 All notable changes to the Quran AI Transcription API project.
 
+## [1.3.0] - 2025-10-01
+
+### Added
+- **Multi-Ayah Detection**: Now detects and returns multiple consecutive verses in a single audio
+- **Basmala Handling**: Special handling for "بسم الله الرحمن الرحيم" (Basmala)
+  - Automatically detected at the start of recitations
+  - Returns `ayah_number: 0` for Basmala in all surahs except Surah 1
+  - Returns `ayah_number: 1` for Basmala in Surah 1 (Al-Fatiha)
+  - Includes `is_basmala: true` flag in response
+- **Consecutive Verse Matching**: Intelligently finds sequences of verses in continuous recitation
+- **Improved Timing Distribution**: Better timestamp allocation across multiple verses
+
+### Changed
+- Enhanced `_find_consecutive_verses()` to detect verse sequences
+- Added `_is_basmala()` for Basmala detection
+- Added `_find_verse_sequence()` for sequential verse matching
+- Added `_get_verse_by_key()` helper method
+- Improved verse matching to handle multi-verse audio
+- Better time distribution across detected verses
+
+### Fixed
+- Now correctly identifies multiple verses instead of just one
+- Proper Basmala numbering based on surah context
+- Better handling of continuous recitations without clear pauses
+
 ## [1.2.0] - 2025-10-01
 
 ### Added

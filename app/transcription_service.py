@@ -291,19 +291,25 @@ class TranscriptionService:
         
         # Create details from matched verses
         details = []
-        for matched in matched_verses:
+        cumulative_time = 0.0
+        
+        for idx, matched in enumerate(matched_verses):
             surah = matched['surah']
             ayah = matched['ayah']
             verse_text = matched['text']
+            is_basmala = matched.get('is_basmala', False)
             
             # Get timing info
             start_time = matched.get('audio_start_time', 0.0)
             end_time = matched.get('audio_end_time', 0.0)
             
-            # If no timing from matching, use overall timestamps
+            # If no timing from matching, estimate based on position
             if start_time == 0.0 and end_time == 0.0 and timestamps:
-                start_time = timestamps[0]["start"]
-                end_time = timestamps[-1]["end"]
+                # Distribute time across verses proportionally
+                total_duration = timestamps[-1]["end"] - timestamps[0]["start"]
+                verse_duration = total_duration / len(matched_verses)
+                start_time = timestamps[0]["start"] + (idx * verse_duration)
+                end_time = start_time + verse_duration
             
             # Count words in the verse
             word_count = quran_data.count_words(verse_text)
@@ -319,9 +325,15 @@ class TranscriptionService:
                 "audio_end_timestamp": quran_data._format_timestamp(end_time),
                 "match_confidence": matched.get('similarity', 0.0)
             }
+            
+            # Add Basmala indicator if applicable
+            if is_basmala:
+                detail["is_basmala"] = True
+            
             details.append(detail)
             
-            logger.info(f"Matched: Surah {surah}, Ayah {ayah} (confidence: {matched.get('similarity', 0.0):.2f})")
+            ayah_desc = "Basmala" if is_basmala else f"Ayah {ayah}"
+            logger.info(f"Matched: Surah {surah}, {ayah_desc} (confidence: {matched.get('similarity', 0.0):.2f})")
         
         return details
 

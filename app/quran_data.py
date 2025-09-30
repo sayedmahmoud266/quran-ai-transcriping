@@ -250,12 +250,174 @@ class QuranData:
     
     def _match_sliding_window(self, normalized_text: str) -> List[Dict]:
         """
-        Match verses using a sliding window approach.
+        Match verses using a sliding window approach for consecutive ayahs.
         """
+        # Try to find consecutive verses in the text
+        consecutive_matches = self._find_consecutive_verses(normalized_text)
+        if consecutive_matches:
+            return consecutive_matches
+        
+        # Fallback to single best match
         best_match = self._find_best_verse_match(normalized_text)
         if best_match:
             return [best_match]
         return []
+    
+    def _is_basmala(self, text: str) -> bool:
+        """
+        Check if the text is Basmala (بسم الله الرحمن الرحيم).
+        """
+        basmala_normalized = self.normalize_arabic_text("بسم الله الرحمن الرحيم")
+        text_normalized = self.normalize_arabic_text(text)
+        
+        # Check if text contains or is very similar to Basmala
+        if basmala_normalized in text_normalized or text_normalized in basmala_normalized:
+            return True
+        
+        # Check similarity
+        similarity = fuzz.ratio(text_normalized, basmala_normalized) / 100.0
+        return similarity >= 0.85
+    
+    def _find_consecutive_verses(self, text: str, min_similarity: float = 0.6) -> List[Dict]:
+        """
+        Find consecutive verses in the transcribed text.
+        Handles Basmala detection and multi-ayah sequences.
+        """
+        words = text.split()
+        if len(words) < 3:
+            return []
+        
+        matched_verses = []
+        
+        # Check if text starts with Basmala
+        basmala_text = ' '.join(words[:4]) if len(words) >= 4 else text
+        has_basmala = self._is_basmala(basmala_text)
+        
+        if has_basmala:
+            # Try to identify the surah from the following text
+            remaining_text = ' '.join(words[4:]) if len(words) > 4 else ""
+            
+            if remaining_text:
+                # Find the first verse after Basmala
+                next_verse = self._find_best_verse_match(remaining_text, min_similarity=0.65)
+                
+                if next_verse:
+                    surah_num = next_verse['surah']
+                    
+                    # Add Basmala entry
+                    # Surah 1 (Al-Fatiha): Basmala is ayah 1
+                    # Surah 9 (At-Tawbah): No Basmala
+                    # Other surahs: Basmala is ayah 0 (not numbered)
+                    if surah_num == 1:
+                        basmala_entry = {
+                            'surah': 1,
+                            'ayah': 1,
+                            'text': self.get_verse_with_tashkeel(1, 1),
+                            'similarity': 0.95,
+                            'is_basmala': True
+                        }
+                    else:
+                        basmala_entry = {
+                            'surah': surah_num,
+                            'ayah': 0,
+                            'text': "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ",
+                            'similarity': 0.95,
+                            'is_basmala': True
+                        }
+                    matched_verses.append(basmala_entry)
+                    
+                    # Add the following verse(s)
+                    following_verses = self._find_verse_sequence(remaining_text, surah_num, next_verse['ayah'])
+                    matched_verses.extend(following_verses)
+                    
+                    return matched_verses
+        
+        # No Basmala detected, try to find consecutive verses
+        return self._find_verse_sequence(text)
+    
+    def _find_verse_sequence(self, text: str, expected_surah: int = None, start_ayah: int = None) -> List[Dict]:
+        """
+        Find a sequence of consecutive verses in the text.
+        
+        Args:
+            text: Normalized text to search
+            expected_surah: Expected surah number (if known from context)
+            start_ayah: Expected starting ayah (if known from context)
+        """
+        if not text.strip():
+            return []
+        
+        words = text.split()
+        if len(words) < 3:
+            # Too short, try single match
+            match = self._find_best_verse_match(text)
+            return [match] if match else []
+        
+        matched_verses = []
+        
+        # Try to find the first verse
+        first_match = self._find_best_verse_match(text, min_similarity=0.6)
+        
+        if not first_match:
+            return []
+        
+        current_surah = expected_surah if expected_surah else first_match['surah']
+        current_ayah = start_ayah if start_ayah else first_match['ayah']
+        
+        # Try to match consecutive verses
+        remaining_text = text
+        max_verses = 10  # Limit to prevent infinite loops
+        
+        for _ in range(max_verses):
+            # Get the expected verse
+            verse_key = f"{current_surah}:{current_ayah}"
+            expected_verse_text = self.normalized_verses.get(verse_key, "")
+            
+            if not expected_verse_text:
+                break
+            
+            # Check if remaining text starts with this verse
+            similarity = fuzz.partial_ratio(remaining_text, expected_verse_text) / 100.0
+            
+            if similarity >= 0.6:
+                # Found a match
+                verse_data = self._get_verse_by_key(current_surah, current_ayah)
+                if verse_data:
+                    matched_verses.append({
+                        'surah': current_surah,
+                        'ayah': current_ayah,
+                        'text': verse_data['text'],
+                        'similarity': similarity
+                    })
+                    
+                    # Remove matched portion from remaining text
+                    verse_words = expected_verse_text.split()
+                    remaining_words = remaining_text.split()
+                    
+                    # Estimate how many words were matched
+                    words_to_remove = min(len(verse_words), len(remaining_words))
+                    remaining_text = ' '.join(remaining_words[words_to_remove:])
+                    
+                    if not remaining_text.strip():
+                        break
+                    
+                    # Move to next ayah
+                    current_ayah += 1
+                else:
+                    break
+            else:
+                break
+        
+        return matched_verses if matched_verses else ([first_match] if first_match else [])
+    
+    def _get_verse_by_key(self, surah: int, ayah: int) -> Optional[Dict]:
+        """
+        Get verse data by surah and ayah number.
+        """
+        for verse in self.quran_data:
+            if verse['surah'] == surah and verse['ayah'] == ayah:
+                return verse
+        return None
     
     def _find_best_verse_match(self, text: str, min_similarity: float = 0.6) -> Optional[Dict]:
         """
