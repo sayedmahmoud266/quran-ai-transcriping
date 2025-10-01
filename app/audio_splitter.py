@@ -51,7 +51,7 @@ class AudioSplitter:
         threshold_ms: int = 500
     ) -> List[Dict]:
         """
-        Detect silence gaps within an ayah segment.
+        Detect silence gaps within an ayah segment (excluding leading/trailing silences).
         
         Args:
             segment: Audio segment for the ayah
@@ -59,7 +59,7 @@ class AudioSplitter:
             threshold_ms: Minimum silence duration to detect (milliseconds)
             
         Returns:
-            List of silence gap dictionaries
+            List of silence gap dictionaries (only internal gaps)
         """
         silence_gaps = []
         
@@ -81,15 +81,31 @@ class AudioSplitter:
             word_count = len(ayah_text_normalized.split())
             segment_duration_ms = len(segment)
             
-            # Process each silence
+            # Define margins to exclude leading/trailing silences
+            # Consider first/last 10% of audio as edge regions
+            leading_margin = segment_duration_ms * 0.1
+            trailing_margin = segment_duration_ms * 0.9
+            
+            # Process each silence, excluding those at edges
             for silence_start, silence_end in silences:
+                # Skip silences that are at the very beginning or end
+                if silence_start < leading_margin:
+                    logger.debug(f"Skipping leading silence at {silence_start}ms")
+                    continue
+                
+                if silence_end > trailing_margin:
+                    logger.debug(f"Skipping trailing silence at {silence_end}ms")
+                    continue
+                
                 silence_duration = silence_end - silence_start
                 
                 # Estimate position in words (approximate)
                 position_ratio = silence_start / segment_duration_ms
                 estimated_word_position = int(position_ratio * word_count)
                 
-                # Ensure position is within bounds
+                # Ensure position is within bounds (not at word 0 or last word)
+                if estimated_word_position <= 0:
+                    estimated_word_position = 1
                 if estimated_word_position >= word_count:
                     estimated_word_position = word_count - 1
                 
@@ -100,7 +116,8 @@ class AudioSplitter:
                     "silence_position_after_word": estimated_word_position
                 })
             
-            logger.debug(f"Detected {len(silence_gaps)} silence gaps in ayah")
+            if silence_gaps:
+                logger.debug(f"Detected {len(silence_gaps)} internal silence gaps in ayah")
             
         except Exception as e:
             logger.warning(f"Error detecting silence gaps: {e}")
@@ -277,6 +294,11 @@ class AudioSplitter:
                             threshold_ms=500  # 500ms minimum silence
                         )
                         
+                        # Calculate relative offsets (within the extracted segment)
+                        # The gap adjustment means the segment includes some silence
+                        relative_actual_start = original_start - start_time
+                        relative_actual_end = original_end - start_time
+                        
                         # Build metadata entry
                         metadata_entry = {
                             "surah_number": surah,
@@ -286,10 +308,14 @@ class AudioSplitter:
                             "filename": filename,
                             "is_basmala": is_basmala,
                             "duration_seconds": round(len(segment) / 1000, 2),
-                            "audio_start_offset_ms": start_time,
-                            "audio_end_offset_ms": end_time,
-                            "actual_ayah_start_offset_ms": original_start,
-                            "actual_ayah_end_offset_ms": original_end
+                            # Absolute offsets (relative to entire surah audio)
+                            "audio_start_offset_absolute_ms": start_time,
+                            "audio_end_offset_absolute_ms": end_time,
+                            "actual_ayah_start_offset_absolute_ms": original_start,
+                            "actual_ayah_end_offset_absolute_ms": original_end,
+                            # Relative offsets (within this ayah's audio file)
+                            "actual_ayah_start_offset_relative_ms": relative_actual_start,
+                            "actual_ayah_end_offset_relative_ms": relative_actual_end
                         }
                         
                         # Add silence gaps if detected

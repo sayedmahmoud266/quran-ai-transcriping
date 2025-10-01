@@ -482,8 +482,8 @@ class TranscriptionService:
                 "end_to_word": word_count,
                 "audio_start_timestamp": quran_data._format_timestamp(start_time),
                 "audio_end_timestamp": quran_data._format_timestamp(end_time),
-                "audio_start_offset_ms": start_time_ms,
-                "audio_end_offset_ms": end_time_ms,
+                "audio_start_offset_absolute_ms": start_time_ms,
+                "audio_end_offset_absolute_ms": end_time_ms,
                 "match_confidence": matched.get('similarity', 0.0)
             }
             
