@@ -364,9 +364,16 @@ class AudioSplitter:
                         )
                         
                         # Calculate relative offsets (within the extracted segment)
-                        # The gap adjustment means the segment includes some silence
+                        # Relative start: how many ms from the beginning of the file to the actual ayah start
                         relative_actual_start = original_start - start_time
-                        relative_actual_end = original_end - start_time
+                        
+                        # Relative end: NEGATIVE number showing how many ms removed from the end
+                        # If original_end < end_time, the ayah was cut short
+                        relative_actual_end = original_end - end_time  # Will be negative if cut off
+                        
+                        # Log if ayah was cut off
+                        if relative_actual_end < -1000:  # More than 1 second cut off
+                            logger.warning(f"Ayah {detail['ayah_number']} was cut off: {-relative_actual_end}ms removed from end")
                         
                         # Build metadata entry with unified schema
                         metadata_entry = {
