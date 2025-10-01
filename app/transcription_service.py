@@ -321,7 +321,7 @@ class TranscriptionService:
         logger.info(f"Validating {len(details)} ayahs...")
         
         # Normalize transcription for comparison
-        transcription_normalized = quran_data._normalize_text(transcription)
+        transcription_normalized = quran_data.normalize_arabic_text(transcription)
         transcription_words = transcription_normalized.split()
         
         corrected_details = []
@@ -329,7 +329,7 @@ class TranscriptionService:
         
         for idx, detail in enumerate(details):
             # Get expected ayah text
-            expected_text = quran_data._normalize_text(detail['ayah_text_tashkeel'])
+            expected_text = quran_data.normalize_arabic_text(detail['ayah_text_tashkeel'])
             expected_words = expected_text.split()
             expected_word_count = len(expected_words)
             
