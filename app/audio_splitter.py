@@ -189,34 +189,139 @@ class AudioSplitter:
         
         return silence_gaps
     
+    def _find_best_split_point(
+        self,
+        audio: AudioSegment,
+        ayah1_details: Dict,
+        ayah2_details: Dict,
+        original_split_ms: int
+    ) -> Tuple[int, bool]:
+        """
+        Find the best split point between two consecutive ayahs with 0ms gap.
+        Uses silence detection and duration verification.
+        
+        Args:
+            audio: Full audio segment
+            ayah1_details: First ayah details
+            ayah2_details: Second ayah details
+            original_split_ms: Original split point in milliseconds
+            
+        Returns:
+            Tuple of (best_split_point_ms, is_confident)
+        """
+        from pydub.silence import detect_silence
+        from app.quran_data import quran_data
+        
+        logger.info(f"🔍 Finding best split point between ayah {ayah1_details['ayah_number']} and {ayah2_details['ayah_number']}")
+        
+        # Get ayah 1 expected duration
+        ayah1_start = self._parse_timestamp(ayah1_details['audio_start_timestamp'])
+        ayah1_end = self._parse_timestamp(ayah1_details['audio_end_timestamp'])
+        expected_duration = ayah1_end - ayah1_start
+        
+        # Define search window (±30 seconds around original split)
+        search_start = max(ayah1_start, original_split_ms - 30000)
+        search_end = min(len(audio), original_split_ms + 30000)
+        search_segment = audio[search_start:search_end]
+        
+        logger.info(f"  Search window: {search_start}ms to {search_end}ms")
+        
+        # Detect all silences in the search window
+        silences = detect_silence(
+            search_segment,
+            min_silence_len=300,  # 300ms minimum
+            silence_thresh=-40
+        )
+        
+        if not silences:
+            logger.warning("  ⚠ No silences detected in search window, keeping original split")
+            return original_split_ms, False
+        
+        logger.info(f"  Found {len(silences)} silence points")
+        
+        # Try each silence point
+        best_split = original_split_ms
+        best_confidence = False
+        best_ratio = 999
+        
+        for silence_start, silence_end in silences:
+            # Convert to absolute position (use end of silence as split point)
+            test_split = search_start + silence_end
+            
+            # Calculate ayah 1 duration with this split
+            test_duration = test_split - ayah1_start
+            duration_ratio = abs(test_duration - expected_duration) / expected_duration if expected_duration > 0 else 999
+            
+            logger.debug(f"    Split at {test_split}ms: duration {test_duration}ms (expected {expected_duration}ms), ratio {duration_ratio:.2f}")
+            
+            # Check if duration is reasonable (within 15% of expected)
+            if duration_ratio < 0.15 and duration_ratio < best_ratio:
+                logger.info(f"    ✓ Good match! Duration ratio: {duration_ratio:.2f}")
+                best_split = test_split
+                best_confidence = True
+                best_ratio = duration_ratio
+        
+        if best_confidence:
+            logger.info(f"  ✅ Found confident split point at {best_split}ms (ratio: {best_ratio:.2f})")
+        else:
+            logger.warning(f"  ⚠ No confident split found, using original at {original_split_ms}ms")
+            best_split = original_split_ms
+        
+        return best_split, best_confidence
+    
     def _calculate_adjusted_timestamps(
         self,
-        ayah_details: List[Dict]
-    ) -> List[Tuple[int, int]]:
+        ayah_details: List[Dict],
+        audio: AudioSegment = None
+    ) -> List[Tuple[int, int, bool]]:
         """
         Calculate adjusted timestamps by splitting gaps between ayahs.
+        For consecutive ayahs with 0ms gap, uses intelligent split point detection.
         
         Args:
             ayah_details: List of ayah details with timestamps
+            audio: Optional full audio for intelligent split detection
             
         Returns:
-            List of (adjusted_start_ms, adjusted_end_ms) tuples
+            List of (adjusted_start_ms, adjusted_end_ms, is_uncertain) tuples
         """
         adjusted_timestamps = []
         
         for idx, detail in enumerate(ayah_details):
             start_time = self._parse_timestamp(detail['audio_start_timestamp'])
             end_time = self._parse_timestamp(detail['audio_end_timestamp'])
+            is_uncertain = False
             
             # Adjust start time (split gap with previous ayah)
             if idx > 0:
                 prev_end = self._parse_timestamp(ayah_details[idx - 1]['audio_end_timestamp'])
                 gap = start_time - prev_end
-                if gap > 0:
-                    # Split the gap in the middle
+                
+                if gap == 0 and audio is not None:
+                    # Zero gap - use intelligent split detection
+                    logger.info(f"⚠ Zero gap detected between ayah {ayah_details[idx-1]['ayah_number']} and {detail['ayah_number']}")
+                    best_split, is_confident = self._find_best_split_point(
+                        audio,
+                        ayah_details[idx - 1],
+                        detail,
+                        start_time  # Original split point
+                    )
+                    
+                    # Update previous ayah's end time
+                    if idx > 0 and len(adjusted_timestamps) > 0:
+                        prev_start, _, prev_uncertain = adjusted_timestamps[idx - 1]
+                        adjusted_timestamps[idx - 1] = (prev_start, best_split, not is_confident)
+                    
+                    adjusted_start = best_split
+                    is_uncertain = not is_confident
+                    
+                elif gap > 0:
+                    # Normal gap - split in the middle
                     adjusted_start = prev_end + (gap // 2)
                 else:
+                    # Negative gap (overlap) - use original
                     adjusted_start = start_time
+                    is_uncertain = True
             else:
                 # First ayah - use original start time
                 adjusted_start = start_time
@@ -225,7 +330,11 @@ class AudioSplitter:
             if idx < len(ayah_details) - 1:
                 next_start = self._parse_timestamp(ayah_details[idx + 1]['audio_start_timestamp'])
                 gap = next_start - end_time
-                if gap > 0:
+                
+                if gap == 0:
+                    # Will be handled when processing next ayah
+                    adjusted_end = end_time
+                elif gap > 0:
                     # Split the gap in the middle
                     adjusted_end = end_time + (gap // 2)
                 else:
@@ -234,9 +343,10 @@ class AudioSplitter:
                 # Last ayah - use original end time
                 adjusted_end = end_time
             
-            adjusted_timestamps.append((adjusted_start, adjusted_end))
+            adjusted_timestamps.append((adjusted_start, adjusted_end, is_uncertain))
             
-            logger.debug(f"Ayah {idx+1}: Original [{start_time}-{end_time}] → Adjusted [{adjusted_start}-{adjusted_end}]")
+            uncertain_flag = " [UNCERTAIN]" if is_uncertain else ""
+            logger.debug(f"Ayah {idx+1}: Original [{start_time}-{end_time}] → Adjusted [{adjusted_start}-{adjusted_end}]{uncertain_flag}")
         
         return adjusted_timestamps
     
@@ -279,8 +389,8 @@ class AudioSplitter:
             
             logger.info(f"Audio loaded: duration={len(audio)/1000:.2f}s, channels={audio.channels}, sample_rate={audio.frame_rate}Hz")
             
-            # Calculate adjusted timestamps (split gaps between ayahs)
-            adjusted_timestamps = self._calculate_adjusted_timestamps(ayah_details)
+            # Calculate adjusted timestamps (split gaps between ayahs, with intelligent split detection)
+            adjusted_timestamps = self._calculate_adjusted_timestamps(ayah_details, audio)
             
             # Create a BytesIO object to store the zip file
             zip_buffer = io.BytesIO()
@@ -304,8 +414,8 @@ class AudioSplitter:
                 
                 for idx, detail in enumerate(ayah_details):
                     try:
-                        # Get adjusted timestamps
-                        start_time, end_time = adjusted_timestamps[idx]
+                        # Get adjusted timestamps and uncertainty flag
+                        start_time, end_time, is_uncertain = adjusted_timestamps[idx]
                         
                         # Extract segment
                         segment = audio[start_time:end_time]
@@ -393,7 +503,9 @@ class AudioSplitter:
                             "actual_ayah_start_offset_relative_ms": relative_actual_start,
                             "actual_ayah_end_offset_relative_ms": relative_actual_end,
                             # Silence gaps (always present, empty array if none detected)
-                            "silence_gaps": silence_gaps if silence_gaps else []
+                            "silence_gaps": silence_gaps if silence_gaps else [],
+                            # Split point uncertainty flag
+                            "split_point_uncertain": is_uncertain
                         }
                         
                         ayah_metadata.append(metadata_entry)
