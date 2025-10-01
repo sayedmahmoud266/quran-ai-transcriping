@@ -151,6 +151,7 @@ class TranscriptionService:
                 "data": {
                     "exact_transcription": combined_transcription,
                     "details": details,
+                    "word_timestamps": combined_timestamps,  # Add word timestamps for audio splitting
                     "diagnostics": {
                         "audio_input_end_timestamp": seconds_to_timestamp(audio_input_end_timestamp),
                         "last_ayah_end_timestamp": last_ayah_end_timestamp,

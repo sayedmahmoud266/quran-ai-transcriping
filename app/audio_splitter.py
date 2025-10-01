@@ -48,6 +48,8 @@ class AudioSplitter:
         self,
         segment: AudioSegment,
         ayah_text_normalized: str,
+        ayah_start_time_ms: int,
+        word_timestamps: List[Dict] = None,
         threshold_ms: int = 500
     ) -> List[Dict]:
         """
@@ -56,6 +58,8 @@ class AudioSplitter:
         Args:
             segment: Audio segment for the ayah
             ayah_text_normalized: Normalized ayah text
+            ayah_start_time_ms: Start time of ayah in absolute milliseconds
+            word_timestamps: Word-level timestamps from transcription
             threshold_ms: Minimum silence duration to detect (milliseconds)
             
         Returns:
@@ -77,8 +81,9 @@ class AudioSplitter:
             if not silences:
                 return []
             
-            # Calculate word count for position estimation
-            word_count = len(ayah_text_normalized.split())
+            # Calculate word count
+            ayah_words = ayah_text_normalized.split()
+            word_count = len(ayah_words)
             segment_duration_ms = len(segment)
             
             # Define margins to exclude leading/trailing silences
@@ -99,21 +104,42 @@ class AudioSplitter:
                 
                 silence_duration = silence_end - silence_start
                 
-                # Estimate position in words (approximate)
-                position_ratio = silence_start / segment_duration_ms
-                estimated_word_position = int(position_ratio * word_count)
+                # Calculate absolute silence time
+                absolute_silence_start = ayah_start_time_ms + silence_start
                 
-                # Ensure position is within bounds (not at word 0 or last word)
-                if estimated_word_position <= 0:
-                    estimated_word_position = 1
-                if estimated_word_position >= word_count:
-                    estimated_word_position = word_count - 1
+                # Find word position using actual timestamps if available
+                word_position = None
+                if word_timestamps:
+                    # Find which word this silence comes after
+                    for word_idx, word_ts in enumerate(word_timestamps):
+                        word_end_ms = int(word_ts['end'] * 1000)
+                        
+                        # If silence starts after this word ends
+                        if word_end_ms <= absolute_silence_start:
+                            word_position = word_idx + 1  # Position after this word (1-indexed)
+                        else:
+                            break
+                
+                # Fallback to time-based estimation if timestamps not available
+                if word_position is None:
+                    position_ratio = silence_start / segment_duration_ms
+                    word_position = int(position_ratio * word_count)
+                    if word_position <= 0:
+                        word_position = 1
+                    if word_position >= word_count:
+                        word_position = word_count - 1
+                
+                # Ensure position is within bounds
+                if word_position <= 0:
+                    word_position = 1
+                if word_position >= word_count:
+                    word_position = word_count - 1
                 
                 silence_gaps.append({
                     "silence_start_ms": silence_start,
                     "silence_end_ms": silence_end,
                     "silence_duration_ms": silence_duration,
-                    "silence_position_after_word": estimated_word_position
+                    "silence_position_after_word": word_position
                 })
             
             if silence_gaps:
@@ -178,7 +204,8 @@ class AudioSplitter:
     def split_audio_by_ayahs(
         self,
         audio_file_path: str,
-        ayah_details: List[Dict]
+        ayah_details: List[Dict],
+        word_timestamps: List[Dict] = None
     ) -> Tuple[io.BytesIO, str]:
         """
         Split audio file into individual ayah segments and create a zip file.
@@ -186,6 +213,7 @@ class AudioSplitter:
         Args:
             audio_file_path: Path to the original audio file
             ayah_details: List of ayah details with timestamps
+            word_timestamps: Optional word-level timestamps from transcription
             
         Returns:
             Tuple of (BytesIO object containing zip file, suggested filename)
@@ -291,6 +319,8 @@ class AudioSplitter:
                         silence_gaps = self._detect_silence_gaps_in_segment(
                             segment,
                             ayah_text_normalized,
+                            start_time,  # Absolute start time for word matching
+                            word_timestamps,
                             threshold_ms=500  # 500ms minimum silence
                         )
                         
@@ -299,7 +329,7 @@ class AudioSplitter:
                         relative_actual_start = original_start - start_time
                         relative_actual_end = original_end - start_time
                         
-                        # Build metadata entry
+                        # Build metadata entry with unified schema
                         metadata_entry = {
                             "surah_number": surah,
                             "ayah_number": ayah_number_for_metadata,
@@ -315,12 +345,10 @@ class AudioSplitter:
                             "actual_ayah_end_offset_absolute_ms": original_end,
                             # Relative offsets (within this ayah's audio file)
                             "actual_ayah_start_offset_relative_ms": relative_actual_start,
-                            "actual_ayah_end_offset_relative_ms": relative_actual_end
+                            "actual_ayah_end_offset_relative_ms": relative_actual_end,
+                            # Silence gaps (always present, empty array if none detected)
+                            "silence_gaps": silence_gaps if silence_gaps else []
                         }
-                        
-                        # Add silence gaps if detected
-                        if silence_gaps:
-                            metadata_entry["silence_gaps"] = silence_gaps
                         
                         ayah_metadata.append(metadata_entry)
                         
