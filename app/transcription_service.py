@@ -107,6 +107,10 @@ class TranscriptionService:
                          for r in chunk_results]
             details = self._create_verse_details(combined_transcription, combined_timestamps, chunk_info)
             
+            # Validate and correct verse boundaries (feedback loop)
+            logger.info("Running validation and correction feedback loop...")
+            details = self._validate_and_correct_verses(details, combined_transcription, combined_timestamps)
+            
             # Calculate diagnostic timestamps
             audio_input_end_timestamp = chunk_results[-1].get("chunk_end_time", 0) if chunk_results else 0
             last_ayah_end_timestamp = details[-1]["audio_end_timestamp"] if details else "00:00:00.000"
@@ -292,6 +296,110 @@ class TranscriptionService:
             })
         
         return timestamps
+    
+    def _validate_and_correct_verses(
+        self,
+        details: List[Dict],
+        transcription: str,
+        timestamps: List[Dict]
+    ) -> List[Dict]:
+        """
+        Validate verse boundaries and correct misalignments.
+        This is a feedback loop that checks if each ayah's audio matches its text.
+        
+        Args:
+            details: Initial verse details
+            transcription: Full transcription text
+            timestamps: Word-level timestamps
+            
+        Returns:
+            Corrected verse details
+        """
+        if not details or len(details) < 2:
+            return details
+        
+        logger.info(f"Validating {len(details)} ayahs...")
+        
+        # Normalize transcription for comparison
+        transcription_normalized = quran_data._normalize_text(transcription)
+        transcription_words = transcription_normalized.split()
+        
+        corrected_details = []
+        word_index = 0
+        
+        for idx, detail in enumerate(details):
+            # Get expected ayah text
+            expected_text = quran_data._normalize_text(detail['ayah_text_tashkeel'])
+            expected_words = expected_text.split()
+            expected_word_count = len(expected_words)
+            
+            # Extract actual words from transcription at current position
+            if word_index + expected_word_count <= len(transcription_words):
+                actual_words = transcription_words[word_index:word_index + expected_word_count]
+                actual_text = ' '.join(actual_words)
+                
+                # Calculate similarity
+                from rapidfuzz import fuzz
+                similarity = fuzz.ratio(expected_text, actual_text) / 100.0
+                
+                logger.debug(f"Ayah {detail['ayah_number']}: Expected {expected_word_count} words, similarity: {similarity:.2f}")
+                
+                # If similarity is too low, try to find the correct boundary
+                if similarity < 0.70:
+                    logger.warning(f"Low similarity ({similarity:.2f}) for Ayah {detail['ayah_number']}, attempting correction...")
+                    
+                    # Search for best match in a window
+                    best_match_index = word_index
+                    best_similarity = similarity
+                    search_window = min(20, len(transcription_words) - word_index)
+                    
+                    for offset in range(-5, search_window):
+                        test_start = max(0, word_index + offset)
+                        test_end = min(len(transcription_words), test_start + expected_word_count)
+                        
+                        if test_end - test_start == expected_word_count:
+                            test_words = transcription_words[test_start:test_end]
+                            test_text = ' '.join(test_words)
+                            test_similarity = fuzz.ratio(expected_text, test_text) / 100.0
+                            
+                            if test_similarity > best_similarity:
+                                best_similarity = test_similarity
+                                best_match_index = test_start
+                    
+                    if best_similarity > similarity:
+                        logger.info(f"  → Corrected position: word {word_index} → {best_match_index}, similarity: {similarity:.2f} → {best_similarity:.2f}")
+                        word_index = best_match_index
+                        similarity = best_similarity
+                
+                # Calculate timestamps based on corrected word positions
+                if word_index < len(timestamps) and word_index + expected_word_count <= len(timestamps):
+                    start_time = timestamps[word_index]["start"]
+                    end_time = timestamps[word_index + expected_word_count - 1]["end"]
+                    
+                    # Update detail with corrected timestamps
+                    corrected_detail = detail.copy()
+                    corrected_detail["audio_start_timestamp"] = quran_data._format_timestamp(start_time)
+                    corrected_detail["audio_end_timestamp"] = quran_data._format_timestamp(end_time)
+                    corrected_detail["match_confidence"] = similarity
+                    corrected_detail["start_from_word"] = 1
+                    corrected_detail["end_to_word"] = expected_word_count
+                    
+                    corrected_details.append(corrected_detail)
+                    
+                    # Move to next ayah
+                    word_index += expected_word_count
+                else:
+                    # Keep original if we can't correct
+                    logger.warning(f"  → Could not correct Ayah {detail['ayah_number']}, keeping original")
+                    corrected_details.append(detail)
+                    word_index += expected_word_count
+            else:
+                # Not enough words left, keep original
+                corrected_details.append(detail)
+                break
+        
+        logger.info(f"Validation complete: {len(corrected_details)} ayahs validated")
+        return corrected_details
     
     def _create_verse_details(self, transcription: str, 
                             timestamps: List[Dict],
