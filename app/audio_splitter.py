@@ -107,18 +107,50 @@ class AudioSplitter:
                 # Calculate absolute silence time
                 absolute_silence_start = ayah_start_time_ms + silence_start
                 
+                logger.info(f"=== Silence Detection Debug ===")
+                logger.info(f"Ayah start time (absolute): {ayah_start_time_ms}ms")
+                logger.info(f"Silence start (relative): {silence_start}ms")
+                logger.info(f"Silence start (absolute): {absolute_silence_start}ms")
+                logger.info(f"Ayah text: {ayah_text_normalized}")
+                logger.info(f"Ayah words: {ayah_words}")
+                logger.info(f"Ayah word count: {word_count}")
+                
                 # Find word position using actual timestamps if available
                 word_position = None
                 if word_timestamps:
-                    # Find which word this silence comes after
-                    for word_idx, word_ts in enumerate(word_timestamps):
+                    logger.info(f"Total word timestamps available: {len(word_timestamps)}")
+                    
+                    # Filter timestamps to only those within this ayah's time range
+                    ayah_end_time_ms = ayah_start_time_ms + segment_duration_ms
+                    ayah_word_timestamps = []
+                    
+                    for wt in word_timestamps:
+                        word_start_ms = int(wt['start'] * 1000)
+                        word_end_ms = int(wt['end'] * 1000)
+                        
+                        # Check if this word is within the ayah's time range
+                        if word_start_ms >= ayah_start_time_ms and word_end_ms <= ayah_end_time_ms:
+                            ayah_word_timestamps.append(wt)
+                    
+                    logger.info(f"Words within this ayah's time range: {len(ayah_word_timestamps)}")
+                    logger.info(f"First 5 ayah words with timestamps:")
+                    for i, wt in enumerate(ayah_word_timestamps[:5]):
+                        logger.info(f"  Ayah word {i+1}: '{wt.get('word', 'N/A')}' @ {wt['start']:.3f}s - {wt['end']:.3f}s ({int(wt['end']*1000)}ms)")
+                    
+                    # Find which word within THIS AYAH the silence comes after
+                    for word_idx, word_ts in enumerate(ayah_word_timestamps):
                         word_end_ms = int(word_ts['end'] * 1000)
+                        word_text = word_ts.get('word', 'N/A')
                         
                         # If silence starts after this word ends
                         if word_end_ms <= absolute_silence_start:
-                            word_position = word_idx + 1  # Position after this word (1-indexed)
+                            word_position = word_idx + 1  # Position after this word (1-indexed within ayah)
+                            logger.debug(f"  Ayah word {word_idx+1} ('{word_text}') ends at {word_end_ms}ms <= {absolute_silence_start}ms")
                         else:
+                            logger.info(f"  Silence comes after ayah word {word_position}: before '{word_text}' @ {word_end_ms}ms")
                             break
+                else:
+                    logger.warning("No word timestamps available, using time-based estimation")
                 
                 # Fallback to time-based estimation if timestamps not available
                 if word_position is None:
@@ -134,6 +166,13 @@ class AudioSplitter:
                     word_position = 1
                 if word_position >= word_count:
                     word_position = word_count - 1
+                
+                # Log final result
+                if word_position and word_position <= len(ayah_words):
+                    logger.info(f"✓ Final result: Silence after word {word_position}: '{ayah_words[word_position-1]}'")
+                else:
+                    logger.info(f"✓ Final result: Silence after word {word_position}")
+                logger.info(f"==============================\n")
                 
                 silence_gaps.append({
                     "silence_start_ms": silence_start,

@@ -263,7 +263,7 @@ class AudioProcessor:
         self, 
         chunks: List[Dict], 
         min_chunk_duration: float = 1.0,
-        max_chunk_duration: float = 30.0
+        max_chunk_duration: float = 120.0
     ) -> List[Dict]:
         """
         Merge short chunks together to avoid too many small segments.
@@ -271,7 +271,7 @@ class AudioProcessor:
         Args:
             chunks: List of audio chunks
             min_chunk_duration: Minimum duration for a chunk in seconds
-            max_chunk_duration: Maximum duration for a merged chunk in seconds
+            max_chunk_duration: Maximum duration for a merged chunk in seconds (default 120s for long ayahs)
             
         Returns:
             List of merged chunks

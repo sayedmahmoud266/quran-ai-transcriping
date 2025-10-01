@@ -7,6 +7,7 @@ import tempfile
 from pathlib import Path
 from typing import Optional
 import logging
+from logging.handlers import RotatingFileHandler
 
 from fastapi import FastAPI, File, UploadFile, HTTPException, Form
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -16,12 +17,37 @@ from app.audio_processor import audio_processor
 from app.transcription_service import transcription_service
 from app.audio_splitter import audio_splitter
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+# Configure logging with both console and file handlers
+log_dir = Path("logs")
+log_dir.mkdir(exist_ok=True)
+
+# Create formatters
+detailed_formatter = logging.Formatter(
+    '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
+
+# Console handler (INFO level)
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.INFO)
+console_handler.setFormatter(detailed_formatter)
+
+# File handler (DEBUG level) - rotates at 10MB, keeps 5 backups
+file_handler = RotatingFileHandler(
+    log_dir / 'quran_api.log',
+    maxBytes=10*1024*1024,  # 10MB
+    backupCount=5
+)
+file_handler.setLevel(logging.DEBUG)
+file_handler.setFormatter(detailed_formatter)
+
+# Configure root logger
+root_logger = logging.getLogger()
+root_logger.setLevel(logging.DEBUG)
+root_logger.addHandler(console_handler)
+root_logger.addHandler(file_handler)
+
 logger = logging.getLogger(__name__)
+logger.info("Logging configured: Console (INFO) + File (DEBUG) at logs/quran_api.log")
 
 # Create FastAPI app
 app = FastAPI(

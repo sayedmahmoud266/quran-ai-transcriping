@@ -79,7 +79,7 @@ class TranscriptionService:
             chunks = audio_processor.merge_short_chunks(
                 chunks,
                 min_chunk_duration=1.0,   # Minimum 1 second per chunk
-                max_chunk_duration=30.0   # Maximum 30 seconds per chunk
+                max_chunk_duration=120.0  # Maximum 120 seconds (2 minutes) per chunk - allows long ayahs
             )
             
             logger.info(f"Processing {len(chunks)} audio chunks...")
@@ -346,7 +346,8 @@ class TranscriptionService:
                 logger.debug(f"Ayah {detail['ayah_number']}: Expected {expected_word_count} words, similarity: {similarity:.2f}")
                 
                 # If similarity is too low, try to find the correct boundary
-                if similarity < 0.70:
+                # But only if it's significantly low (< 60%) to avoid over-correction
+                if similarity < 0.60:
                     logger.warning(f"Low similarity ({similarity:.2f}) for Ayah {detail['ayah_number']}, attempting correction...")
                     
                     # Search for best match in a window
@@ -367,10 +368,15 @@ class TranscriptionService:
                                 best_similarity = test_similarity
                                 best_match_index = test_start
                     
-                    if best_similarity > similarity:
+                    # Only apply correction if improvement is significant (> 10%)
+                    if best_similarity > similarity + 0.10:
                         logger.info(f"  → Corrected position: word {word_index} → {best_match_index}, similarity: {similarity:.2f} → {best_similarity:.2f}")
                         word_index = best_match_index
                         similarity = best_similarity
+                    else:
+                        logger.info(f"  → No significant improvement found, keeping original position")
+                elif similarity >= 0.60:
+                    logger.debug(f"Ayah {detail['ayah_number']}: Good similarity ({similarity:.2f}), no correction needed")
                 
                 # Calculate timestamps based on corrected word positions
                 if word_index < len(timestamps) and word_index + expected_word_count <= len(timestamps):
