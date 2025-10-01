@@ -44,6 +44,69 @@ class AudioSplitter:
             logger.error(f"Error parsing timestamp '{timestamp}': {e}")
             return 0
     
+    def _detect_silence_gaps_in_segment(
+        self,
+        segment: AudioSegment,
+        ayah_text_normalized: str,
+        threshold_ms: int = 500
+    ) -> List[Dict]:
+        """
+        Detect silence gaps within an ayah segment.
+        
+        Args:
+            segment: Audio segment for the ayah
+            ayah_text_normalized: Normalized ayah text
+            threshold_ms: Minimum silence duration to detect (milliseconds)
+            
+        Returns:
+            List of silence gap dictionaries
+        """
+        silence_gaps = []
+        
+        try:
+            # Detect silence in the segment
+            from pydub.silence import detect_silence
+            
+            # Detect silences longer than threshold_ms with -40dBFS threshold
+            silences = detect_silence(
+                segment,
+                min_silence_len=threshold_ms,
+                silence_thresh=-40
+            )
+            
+            if not silences:
+                return []
+            
+            # Calculate word count for position estimation
+            word_count = len(ayah_text_normalized.split())
+            segment_duration_ms = len(segment)
+            
+            # Process each silence
+            for silence_start, silence_end in silences:
+                silence_duration = silence_end - silence_start
+                
+                # Estimate position in words (approximate)
+                position_ratio = silence_start / segment_duration_ms
+                estimated_word_position = int(position_ratio * word_count)
+                
+                # Ensure position is within bounds
+                if estimated_word_position >= word_count:
+                    estimated_word_position = word_count - 1
+                
+                silence_gaps.append({
+                    "silence_start_ms": silence_start,
+                    "silence_end_ms": silence_end,
+                    "silence_duration_ms": silence_duration,
+                    "silence_position_after_word": estimated_word_position
+                })
+            
+            logger.debug(f"Detected {len(silence_gaps)} silence gaps in ayah")
+            
+        except Exception as e:
+            logger.warning(f"Error detecting silence gaps: {e}")
+        
+        return silence_gaps
+    
     def _calculate_adjusted_timestamps(
         self,
         ayah_details: List[Dict]
@@ -199,15 +262,41 @@ class AudioSplitter:
                         # Add to zip
                         zip_file.writestr(filename, segment_buffer.getvalue())
                         
-                        # Add to metadata
-                        ayah_metadata.append({
+                        # Normalize text (without tashkeel)
+                        from app.quran_data import quran_data
+                        ayah_text_normalized = quran_data.normalize_arabic_text(ayah_text)
+                        
+                        # Calculate actual audio offsets (without gap adjustments)
+                        original_start = self._parse_timestamp(detail['audio_start_timestamp'])
+                        original_end = self._parse_timestamp(detail['audio_end_timestamp'])
+                        
+                        # Detect silence gaps within the ayah
+                        silence_gaps = self._detect_silence_gaps_in_segment(
+                            segment,
+                            ayah_text_normalized,
+                            threshold_ms=500  # 500ms minimum silence
+                        )
+                        
+                        # Build metadata entry
+                        metadata_entry = {
                             "surah_number": surah,
                             "ayah_number": ayah_number_for_metadata,
                             "ayah_text": ayah_text,
+                            "ayah_text_normalized": ayah_text_normalized,
                             "filename": filename,
                             "is_basmala": is_basmala,
-                            "duration_seconds": round(len(segment) / 1000, 2)
-                        })
+                            "duration_seconds": round(len(segment) / 1000, 2),
+                            "audio_start_offset_ms": start_time,
+                            "audio_end_offset_ms": end_time,
+                            "actual_ayah_start_offset_ms": original_start,
+                            "actual_ayah_end_offset_ms": original_end
+                        }
+                        
+                        # Add silence gaps if detected
+                        if silence_gaps:
+                            metadata_entry["silence_gaps"] = silence_gaps
+                        
+                        ayah_metadata.append(metadata_entry)
                         
                         logger.debug(f"Added {filename} to zip (duration: {len(segment)/1000:.2f}s)")
                         

@@ -465,15 +465,25 @@ class TranscriptionService:
             # Count words in the verse
             word_count = quran_data.count_words(verse_text)
             
+            # Normalize text for searching
+            verse_text_normalized = quran_data.normalize_arabic_text(verse_text)
+            
+            # Calculate offsets in milliseconds
+            start_time_ms = int(start_time * 1000)
+            end_time_ms = int(end_time * 1000)
+            
             detail = {
                 "surah_number": surah,
                 "ayah_number": ayah,
                 "ayah_text_tashkeel": verse_text,
+                "ayah_text_normalized": verse_text_normalized,
                 "ayah_word_count": word_count,
                 "start_from_word": 1,
                 "end_to_word": word_count,
                 "audio_start_timestamp": quran_data._format_timestamp(start_time),
                 "audio_end_timestamp": quran_data._format_timestamp(end_time),
+                "audio_start_offset_ms": start_time_ms,
+                "audio_end_offset_ms": end_time_ms,
                 "match_confidence": matched.get('similarity', 0.0)
             }
             
