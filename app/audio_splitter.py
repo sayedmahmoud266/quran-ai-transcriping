@@ -194,7 +194,8 @@ class AudioSplitter:
         audio: AudioSegment,
         ayah1_details: Dict,
         ayah2_details: Dict,
-        original_split_ms: int
+        ayah1_adjusted_start: int,
+        ayah1_adjusted_end: int
     ) -> Tuple[int, bool]:
         """
         Find the best split point between two consecutive ayahs with 0ms gap.
@@ -202,9 +203,10 @@ class AudioSplitter:
         
         Args:
             audio: Full audio segment
-            ayah1_details: First ayah details
+            ayah1_details: First ayah details (for expected duration)
             ayah2_details: Second ayah details
-            original_split_ms: Original split point in milliseconds
+            ayah1_adjusted_start: Adjusted start time of ayah 1 in ms
+            ayah1_adjusted_end: Adjusted end time of ayah 1 in ms (current split point)
             
         Returns:
             Tuple of (best_split_point_ms, is_confident)
@@ -214,14 +216,14 @@ class AudioSplitter:
         
         logger.info(f"🔍 Finding best split point between ayah {ayah1_details['ayah_number']} and {ayah2_details['ayah_number']}")
         
-        # Get ayah 1 expected duration
-        ayah1_start = self._parse_timestamp(ayah1_details['audio_start_timestamp'])
-        ayah1_end = self._parse_timestamp(ayah1_details['audio_end_timestamp'])
-        expected_duration = ayah1_end - ayah1_start
+        # Get ayah 1 expected duration (from original timestamps)
+        ayah1_original_start = self._parse_timestamp(ayah1_details['audio_start_timestamp'])
+        ayah1_original_end = self._parse_timestamp(ayah1_details['audio_end_timestamp'])
+        expected_duration = ayah1_original_end - ayah1_original_start
         
-        # Define search window (±30 seconds around original split, starting from ayah1 end)
-        search_start = max(ayah1_end - 30000, ayah1_start)  # Start from ayah1 end, go back max 30s
-        search_end = min(len(audio), ayah1_end + 30000)  # End 30s after ayah1 end
+        # Define search window (±30 seconds around adjusted split point)
+        search_start = max(ayah1_adjusted_end - 30000, ayah1_adjusted_start)  # Go back max 30s from adjusted end
+        search_end = min(len(audio), ayah1_adjusted_end + 30000)  # Go forward 30s from adjusted end
         search_segment = audio[search_start:search_end]
         
         logger.info(f"  Search window: {search_start}ms to {search_end}ms")
@@ -234,13 +236,13 @@ class AudioSplitter:
         )
         
         if not silences:
-            logger.warning("  ⚠ No silences detected in search window, keeping original split")
-            return original_split_ms, False
+            logger.warning("  ⚠ No silences detected in search window, keeping adjusted split")
+            return ayah1_adjusted_end, False
         
         logger.info(f"  Found {len(silences)} silence points")
         
         # Try each silence point
-        best_split = original_split_ms
+        best_split = ayah1_adjusted_end
         best_confidence = False
         best_ratio = 999
         
@@ -248,8 +250,8 @@ class AudioSplitter:
             # Convert to absolute position (use end of silence as split point)
             test_split = search_start + silence_end
             
-            # Calculate ayah 1 duration with this split
-            test_duration = test_split - ayah1_start
+            # Calculate ayah 1 duration with this split (using adjusted start)
+            test_duration = test_split - ayah1_adjusted_start
             duration_ratio = abs(test_duration - expected_duration) / expected_duration if expected_duration > 0 else 999
             
             logger.debug(f"    Split at {test_split}ms: duration {test_duration}ms (expected {expected_duration}ms), ratio {duration_ratio:.2f}")
@@ -264,8 +266,8 @@ class AudioSplitter:
         if best_confidence:
             logger.info(f"  ✅ Found confident split point at {best_split}ms (ratio: {best_ratio:.2f})")
         else:
-            logger.warning(f"  ⚠ No confident split found, using original at {original_split_ms}ms")
-            best_split = original_split_ms
+            logger.warning(f"  ⚠ No confident split found, using adjusted at {ayah1_adjusted_end}ms")
+            best_split = ayah1_adjusted_end
         
         return best_split, best_confidence
     
@@ -300,11 +302,16 @@ class AudioSplitter:
                 if gap == 0 and audio is not None:
                     # Zero gap - use intelligent split detection
                     logger.info(f"⚠ Zero gap detected between ayah {ayah_details[idx-1]['ayah_number']} and {detail['ayah_number']}")
+                    
+                    # Get previous ayah's adjusted timestamps
+                    prev_adjusted_start, prev_adjusted_end, _ = adjusted_timestamps[idx - 1]
+                    
                     best_split, is_confident = self._find_best_split_point(
                         audio,
                         ayah_details[idx - 1],
                         detail,
-                        start_time  # Original split point
+                        prev_adjusted_start,  # Adjusted start of ayah 1
+                        prev_adjusted_end     # Adjusted end of ayah 1 (current split point)
                     )
                     
                     # Update previous ayah's end time
