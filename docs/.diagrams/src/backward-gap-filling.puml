@@ -1,0 +1,45 @@
+@startuml
+title Backward Gap Filling
+
+start
+
+:Constraint propagation result:\nSurah 55, Ayah 4;
+
+if (start_ayah > 1?) then (yes)
+  partition "Backward Search" {
+    :ayah_num = start_ayah - 1;
+    
+    repeat
+      :Get verse text for ayah_num;
+      :Normalize verse text;
+      
+      if (Verse in transcription?) then (exact match)
+        :Add to backward_matches;
+        :similarity = 1.0;
+      else (no exact match)
+        :Calculate fuzzy similarity;
+        
+        if (similarity >= 75%?) then (yes)
+          :Add to backward_matches;
+        else (no)
+          :Stop backward fill;
+          note right: Don't add incorrect verses
+          stop
+        endif
+      endif
+      
+      :ayah_num--;
+      
+    repeat while (ayah_num >= 1?)
+  }
+  
+  :Insert backward_matches\nat beginning;
+else (no)
+  :No gaps to fill;
+endif
+
+:Continue with forward matching;
+
+stop
+
+@enduml

@@ -1,0 +1,58 @@
+@startuml
+title Constraint Propagation Algorithm
+
+start
+
+:Receive transcribed text;
+:Split into words;
+
+partition "Batch Collection" {
+  :Batch 0: words 0-5;
+  :Search PyQuran for matches;
+  :Collect candidates with position=0;
+  note right: Position=0 means verse starts with these words
+  
+  :Batch 1: words 5-10;
+  :Search PyQuran for matches;
+  :Collect candidates with position=0;
+  
+  :Batch 2: words 10-15;
+  :Search PyQuran for matches;
+  :Collect candidates with position=0;
+  
+  :...continue for max 5 batches;
+}
+
+partition "Constraint Propagation" {
+  :Start with Batch 0 candidates;
+  :Create possible sequences;
+  
+  repeat
+    :Get next batch candidates;
+    
+    repeat :For each existing sequence;
+      :Check if next batch candidate\ncontinues this sequence;
+      note right
+        Same surah AND
+        Consecutive/nearby ayah
+        (within 5 ayahs)
+      end note
+      
+      if (Valid continuation?) then (yes)
+        :Extend sequence;
+      else (no)
+        :Discard this path;
+      endif
+    repeat while (more sequences?)
+    
+    :Update possible sequences;
+    
+  repeat while (more batches?)
+}
+
+:Select longest/best sequence;
+:Extract surah_num and start_ayah;
+
+stop
+
+@enduml

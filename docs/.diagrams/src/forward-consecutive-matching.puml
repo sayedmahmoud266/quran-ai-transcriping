@@ -1,0 +1,48 @@
+@startuml
+title Forward Consecutive Matching
+
+start
+
+:Start from original_start_ayah;
+:Initialize consecutive_misses = 0;
+
+partition "Forward Loop" {
+  repeat
+    :Get next ayah (ayah_num);
+    :Get verse text and normalize;
+    
+    if (Verse in transcription?) then (exact match)
+      :Add to matched_verses;
+      :similarity = 1.0;
+      :consecutive_misses = 0;
+    else (no exact match)
+      :Calculate fuzzy similarity;
+      
+      if (similarity >= 70%?) then (yes)
+        :Add to matched_verses;
+        :consecutive_misses = 0;
+      else (no)
+        :consecutive_misses++;
+        
+        if (consecutive_misses >= 5?) then (yes)
+          :Stop matching;
+          note right
+            5 consecutive misses means
+            we've likely reached the end
+            of the recitation
+          end note
+          stop
+        endif
+      endif
+    endif
+    
+    :ayah_num++;
+    
+  repeat while (ayah_num <= max_ayah?)
+}
+
+:Return all matched_verses;
+
+stop
+
+@enduml

@@ -1,0 +1,5 @@
+# This folder contains rendered PlantUML diagrams
+# 
+# To generate images from source files:
+# cd docs/.diagrams
+# plantuml src/*.puml -o ../images/

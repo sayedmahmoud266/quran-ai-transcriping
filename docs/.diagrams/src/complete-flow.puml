@@ -1,0 +1,63 @@
+@startuml
+title Complete Verse Matching Algorithm Flow
+
+|Audio Processing|
+start
+:Load audio file;
+:Resample to 16kHz;
+:Add silence buffer;
+
+|Transcription|
+:Transcribe with Whisper;
+:Detect silence boundaries;
+:Generate timestamps;
+
+|Verse Matching|
+:Normalize transcription;
+:Split into words;
+
+if (Starts with Basmala?) then (yes)
+  :Detect Basmala;
+  :Remove first 4 words;
+  note right: Will add Basmala back later
+else (no)
+endif
+
+partition "Constraint Propagation" {
+  :Collect candidates from\nmultiple word batches;
+  :Intersect results to find\nconsistent sequences;
+  :Determine surah_num\nand start_ayah;
+}
+
+if (start_ayah > 1?) then (yes)
+  partition "Backward Gap Fill" {
+    :Search ayahs 1 to start_ayah-1;
+    :Match with fuzzy threshold 75%;
+    :Add found ayahs to list;
+  }
+else (no)
+endif
+
+partition "Forward Matching" {
+  :Start from original_start_ayah;
+  :Match consecutive ayahs;
+  :Allow 5 consecutive misses;
+  :Use fuzzy threshold 70%;
+}
+
+if (Basmala detected?) then (yes)
+  :Add Basmala at beginning;
+  :Set surah_num from first ayah;
+else (no)
+endif
+
+|Output|
+:Generate response with:
+- Matched verses
+- Timestamps
+- Confidence scores
+- Diagnostics;
+
+stop
+
+@enduml
