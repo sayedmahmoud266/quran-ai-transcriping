@@ -86,23 +86,63 @@ The returned ZIP file contains:
 
 ```
 surah_055_ayahs.zip
-├── surah_055_basmala.mp3          # Basmala (if present)
+├── surah_055_ayah_000_basmala.mp3 # Basmala (always first)
 ├── surah_055_ayah_001.mp3         # First ayah
 ├── surah_055_ayah_002.mp3         # Second ayah
 ├── ...
 ├── surah_055_ayah_078.mp3         # Last ayah
+├── metadata.json                   # Ayah metadata (text, numbers, filenames)
 └── README.txt                      # Information file
 ```
 
 ### File Naming Convention
 
-- **Basmala**: `surah_XXX_basmala.{ext}`
+- **Basmala**: `surah_XXX_ayah_000_basmala.{ext}` (always sorts first)
 - **Regular Ayahs**: `surah_XXX_ayah_YYY.{ext}`
 
 Where:
 - `XXX` = Surah number (3 digits, zero-padded)
 - `YYY` = Ayah number (3 digits, zero-padded)
 - `{ext}` = Original audio format (mp3, wav, m4a, etc.)
+
+**Note**: Basmala is numbered as ayah 000 to ensure it always appears first when files are sorted alphabetically.
+
+### metadata.json Structure
+
+Each ZIP file includes a `metadata.json` file with complete ayah information:
+
+```json
+{
+  "surah_number": 55,
+  "total_ayahs": 79,
+  "audio_format": "mp3",
+  "ayahs": [
+    {
+      "surah_number": 55,
+      "ayah_number": 0,
+      "ayah_text": "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ",
+      "filename": "surah_055_ayah_000_basmala.mp3",
+      "is_basmala": true,
+      "duration_seconds": 5.57
+    },
+    {
+      "surah_number": 55,
+      "ayah_number": 1,
+      "ayah_text": "الرَّحْمَنُ",
+      "filename": "surah_055_ayah_001.mp3",
+      "is_basmala": false,
+      "duration_seconds": 4.61
+    },
+    ...
+  ]
+}
+```
+
+This metadata file allows you to:
+- Display ayah text alongside audio
+- Build playlists with ayah information
+- Create searchable ayah databases
+- Implement ayah navigation in apps
 
 ### README.txt Contents
 
@@ -111,6 +151,7 @@ Each ZIP file includes a README with:
 - Total ayahs count
 - Audio format
 - File naming explanation
+- Audio enhancement details
 - API information
 
 ## Supported Audio Formats
@@ -123,13 +164,43 @@ The feature preserves the original audio format:
 - ✅ FLAC (.flac) - Lossless
 - ✅ Other formats - Converted to WAV
 
-## Quality Preservation
+## Audio Enhancement Features
+
+### Gap Splitting Algorithm
+
+The system intelligently handles silence gaps between ayahs:
+
+1. **Gap Detection**: Identifies silence between consecutive ayahs
+2. **Midpoint Calculation**: Finds the middle point of each gap
+3. **Smart Distribution**: 
+   - First half of gap → Added to end of previous ayah
+   - Second half of gap → Added to start of next ayah
+
+**Benefits**:
+- ✅ No abrupt cuts in audio
+- ✅ Natural breathing space preserved
+- ✅ Smooth playback experience
+- ✅ No audio clipping or cutting off
+
+**Example**:
+```
+Ayah 1: [00:00:00 - 00:00:05]
+Gap:    [00:00:05 - 00:00:07]  (2 seconds)
+Ayah 2: [00:00:07 - 00:00:12]
+
+After gap splitting:
+Ayah 1: [00:00:00 - 00:00:06]  (+1 second from gap)
+Ayah 2: [00:00:06 - 00:00:12]  (+1 second from gap)
+```
+
+### Quality Preservation
 
 - **Source**: Original uploaded audio file (not resampled)
-- **Extraction**: Precise timestamp-based cutting
+- **Extraction**: Precise timestamp-based cutting with gap adjustment
 - **Encoding**: Format-specific optimal settings
 - **MP3**: 192kbps bitrate for quality/size balance
 - **Lossless**: FLAC and WAV maintain original quality
+- **Gap Handling**: Intelligent silence distribution
 
 ## Performance
 
@@ -179,9 +250,13 @@ If audio format is not supported:
 
 ## Use Cases
 
-### 1. Quran Learning App
+### 1. Quran Learning App with Metadata
 
 ```python
+import zipfile
+import json
+import io
+
 # Download and split a surah
 response = requests.post(
     "http://localhost:8000/transcribe",
@@ -189,12 +264,23 @@ response = requests.post(
     data={"split_audio": "true"}
 )
 
-# Extract and use individual ayahs
+# Extract ayahs with metadata
 with zipfile.ZipFile(io.BytesIO(response.content)) as z:
-    for filename in z.namelist():
-        if filename.endswith('.mp3'):
-            ayah_audio = z.read(filename)
-            # Use in your app
+    # Load metadata
+    metadata = json.loads(z.read('metadata.json'))
+    
+    # Display surah info
+    print(f"Surah {metadata['surah_number']}: {metadata['total_ayahs']} ayahs")
+    
+    # Process each ayah with its text
+    for ayah in metadata['ayahs']:
+        audio_data = z.read(ayah['filename'])
+        ayah_text = ayah['ayah_text']
+        ayah_number = ayah['ayah_number']
+        
+        # Display ayah text and play audio
+        print(f"Ayah {ayah_number}: {ayah_text}")
+        play_audio(audio_data)
 ```
 
 ### 2. Ayah Memorization Tool

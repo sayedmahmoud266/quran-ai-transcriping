@@ -4,6 +4,7 @@ Audio splitting module for extracting individual ayahs from audio files.
 
 import os
 import io
+import json
 import zipfile
 import logging
 from pathlib import Path
@@ -43,6 +44,57 @@ class AudioSplitter:
             logger.error(f"Error parsing timestamp '{timestamp}': {e}")
             return 0
     
+    def _calculate_adjusted_timestamps(
+        self,
+        ayah_details: List[Dict]
+    ) -> List[Tuple[int, int]]:
+        """
+        Calculate adjusted timestamps by splitting gaps between ayahs.
+        
+        Args:
+            ayah_details: List of ayah details with timestamps
+            
+        Returns:
+            List of (adjusted_start_ms, adjusted_end_ms) tuples
+        """
+        adjusted_timestamps = []
+        
+        for idx, detail in enumerate(ayah_details):
+            start_time = self._parse_timestamp(detail['audio_start_timestamp'])
+            end_time = self._parse_timestamp(detail['audio_end_timestamp'])
+            
+            # Adjust start time (split gap with previous ayah)
+            if idx > 0:
+                prev_end = self._parse_timestamp(ayah_details[idx - 1]['audio_end_timestamp'])
+                gap = start_time - prev_end
+                if gap > 0:
+                    # Split the gap in the middle
+                    adjusted_start = prev_end + (gap // 2)
+                else:
+                    adjusted_start = start_time
+            else:
+                # First ayah - use original start time
+                adjusted_start = start_time
+            
+            # Adjust end time (split gap with next ayah)
+            if idx < len(ayah_details) - 1:
+                next_start = self._parse_timestamp(ayah_details[idx + 1]['audio_start_timestamp'])
+                gap = next_start - end_time
+                if gap > 0:
+                    # Split the gap in the middle
+                    adjusted_end = end_time + (gap // 2)
+                else:
+                    adjusted_end = end_time
+            else:
+                # Last ayah - use original end time
+                adjusted_end = end_time
+            
+            adjusted_timestamps.append((adjusted_start, adjusted_end))
+            
+            logger.debug(f"Ayah {idx+1}: Original [{start_time}-{end_time}] → Adjusted [{adjusted_start}-{adjusted_end}]")
+        
+        return adjusted_timestamps
+    
     def split_audio_by_ayahs(
         self,
         audio_file_path: str,
@@ -80,6 +132,9 @@ class AudioSplitter:
             
             logger.info(f"Audio loaded: duration={len(audio)/1000:.2f}s, channels={audio.channels}, sample_rate={audio.frame_rate}Hz")
             
+            # Calculate adjusted timestamps (split gaps between ayahs)
+            adjusted_timestamps = self._calculate_adjusted_timestamps(ayah_details)
+            
             # Create a BytesIO object to store the zip file
             zip_buffer = io.BytesIO()
             
@@ -93,15 +148,17 @@ class AudioSplitter:
             if not surah_num and ayah_details:
                 surah_num = ayah_details[0]['surah_number']
             
+            # Prepare metadata for JSON file
+            ayah_metadata = []
+            
             # Create zip file
             with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
                 logger.info(f"Creating zip file with {len(ayah_details)} ayahs")
                 
                 for idx, detail in enumerate(ayah_details):
                     try:
-                        # Get timestamps
-                        start_time = self._parse_timestamp(detail['audio_start_timestamp'])
-                        end_time = self._parse_timestamp(detail['audio_end_timestamp'])
+                        # Get adjusted timestamps
+                        start_time, end_time = adjusted_timestamps[idx]
                         
                         # Extract segment
                         segment = audio[start_time:end_time]
@@ -110,11 +167,15 @@ class AudioSplitter:
                         surah = detail['surah_number']
                         ayah = detail['ayah_number']
                         is_basmala = detail.get('is_basmala', False)
+                        ayah_text = detail.get('ayah_text_tashkeel', '')
                         
                         if is_basmala:
-                            filename = f"surah_{surah:03d}_basmala{file_ext}"
+                            # Basmala as ayah 000 to sort first
+                            filename = f"surah_{surah:03d}_ayah_000_basmala{file_ext}"
+                            ayah_number_for_metadata = 0
                         else:
                             filename = f"surah_{surah:03d}_ayah_{ayah:03d}{file_ext}"
+                            ayah_number_for_metadata = ayah
                         
                         # Export segment to BytesIO
                         segment_buffer = io.BytesIO()
@@ -138,11 +199,35 @@ class AudioSplitter:
                         # Add to zip
                         zip_file.writestr(filename, segment_buffer.getvalue())
                         
+                        # Add to metadata
+                        ayah_metadata.append({
+                            "surah_number": surah,
+                            "ayah_number": ayah_number_for_metadata,
+                            "ayah_text": ayah_text,
+                            "filename": filename,
+                            "is_basmala": is_basmala,
+                            "duration_seconds": round(len(segment) / 1000, 2)
+                        })
+                        
                         logger.debug(f"Added {filename} to zip (duration: {len(segment)/1000:.2f}s)")
                         
                     except Exception as e:
                         logger.error(f"Error processing ayah {idx+1}: {e}")
                         continue
+                
+                # Add metadata JSON file
+                metadata_json = {
+                    "surah_number": surah_num,
+                    "total_ayahs": len(ayah_details),
+                    "audio_format": file_ext.replace('.', ''),
+                    "ayahs": ayah_metadata
+                }
+                
+                zip_file.writestr(
+                    'metadata.json',
+                    json.dumps(metadata_json, ensure_ascii=False, indent=2)
+                )
+                logger.info("Added metadata.json to zip")
                 
                 # Add a README file
                 readme_content = f"""Quran Audio Ayah Segments
@@ -153,14 +238,22 @@ Total Ayahs: {len(ayah_details)}
 Format: {file_ext}
 
 Files are named as:
-- surah_XXX_basmala{file_ext} (for Basmala)
+- surah_XXX_ayah_000_basmala{file_ext} (for Basmala - always first)
 - surah_XXX_ayah_YYY{file_ext} (for regular ayahs)
 
 Where:
-- XXX = Surah number (3 digits)
-- YYY = Ayah number (3 digits)
+- XXX = Surah number (3 digits, zero-padded)
+- YYY = Ayah number (3 digits, zero-padded)
 
-Generated by Quran AI Transcription API v2.0.0
+Additional Files:
+- metadata.json: Contains ayah text, numbers, and filenames
+
+Audio Enhancement:
+- Gaps between ayahs are split in the middle
+- Each ayah includes half of the silence before and after it
+- This ensures smooth playback without cutting off audio
+
+Generated by Quran AI Transcription API v2.1.0
 https://github.com/sayedmahmoud266/quran-ai-transcriping
 """
                 zip_file.writestr('README.txt', readme_content)
