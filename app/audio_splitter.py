@@ -219,9 +219,9 @@ class AudioSplitter:
         ayah1_end = self._parse_timestamp(ayah1_details['audio_end_timestamp'])
         expected_duration = ayah1_end - ayah1_start
         
-        # Define search window (±30 seconds around original split)
-        search_start = max(ayah1_start, original_split_ms - 30000)
-        search_end = min(len(audio), original_split_ms + 30000)
+        # Define search window (±30 seconds around original split, starting from ayah1 end)
+        search_start = max(ayah1_end - 30000, ayah1_start)  # Start from ayah1 end, go back max 30s
+        search_end = min(len(audio), ayah1_end + 30000)  # End 30s after ayah1 end
         search_segment = audio[search_start:search_end]
         
         logger.info(f"  Search window: {search_start}ms to {search_end}ms")
