@@ -121,22 +121,51 @@ Each ZIP file includes a `metadata.json` file with complete ayah information:
       "surah_number": 55,
       "ayah_number": 0,
       "ayah_text": "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ",
+      "ayah_text_normalized": "بسم الله الرحمن الرحيم",
       "filename": "surah_055_ayah_000_basmala.mp3",
       "is_basmala": true,
-      "duration_seconds": 5.57
+      "duration_seconds": 5.57,
+      "audio_start_offset_absolute_ms": 0,
+      "audio_end_offset_absolute_ms": 5570,
+      "actual_ayah_start_offset_absolute_ms": 0,
+      "actual_ayah_end_offset_absolute_ms": 5570,
+      "actual_ayah_start_offset_relative_ms": 0,
+      "actual_ayah_end_offset_relative_ms": 0,
+      "silence_gaps": [],
+      "cutoff_uncertain": false
     },
     {
       "surah_number": 55,
       "ayah_number": 1,
       "ayah_text": "الرَّحْمَنُ",
+      "ayah_text_normalized": "الرحمن",
       "filename": "surah_055_ayah_001.mp3",
       "is_basmala": false,
-      "duration_seconds": 4.61
+      "duration_seconds": 4.61,
+      "audio_start_offset_absolute_ms": 5570,
+      "audio_end_offset_absolute_ms": 10180,
+      "actual_ayah_start_offset_absolute_ms": 5570,
+      "actual_ayah_end_offset_absolute_ms": 10180,
+      "actual_ayah_start_offset_relative_ms": 0,
+      "actual_ayah_end_offset_relative_ms": 0,
+      "silence_gaps": [],
+      "cutoff_uncertain": false
     },
     ...
   ]
 }
 ```
+
+#### Metadata Fields Explained
+
+- **`cutoff_uncertain`**: `true` if the split point between ayahs was uncertain (no silence found in ±10s search)
+- **`audio_start_offset_absolute_ms`**: Start time of extracted audio segment (with gap adjustment)
+- **`audio_end_offset_absolute_ms`**: End time of extracted audio segment (with gap adjustment)
+- **`actual_ayah_start_offset_absolute_ms`**: Actual ayah start from transcription
+- **`actual_ayah_end_offset_absolute_ms`**: Actual ayah end from transcription
+- **`actual_ayah_start_offset_relative_ms`**: Offset within the audio file (0 = starts at beginning)
+- **`actual_ayah_end_offset_relative_ms`**: Offset from end (negative = audio was cut off)
+- **`silence_gaps`**: Array of silence gaps detected within the ayah
 
 This metadata file allows you to:
 - Display ayah text alongside audio
@@ -166,21 +195,17 @@ The feature preserves the original audio format:
 
 ## Audio Enhancement Features
 
-### Gap Splitting Algorithm
+### Intelligent Gap Detection Algorithm
 
-The system intelligently handles silence gaps between ayahs:
+The system uses advanced silence detection to handle gaps between ayahs:
 
-1. **Gap Detection**: Identifies silence between consecutive ayahs
-2. **Midpoint Calculation**: Finds the middle point of each gap
-3. **Smart Distribution**: 
-   - First half of gap → Added to end of previous ayah
-   - Second half of gap → Added to start of next ayah
-
-**Benefits**:
-- ✅ No abrupt cuts in audio
-- ✅ Natural breathing space preserved
-- ✅ Smooth playback experience
-- ✅ No audio clipping or cutting off
+#### 1. **Normal Gap Handling**
+When ayahs have a natural gap (>0ms):
+- Identifies silence between consecutive ayahs
+- Calculates midpoint of the gap
+- Distributes gap evenly:
+  - First half → Added to end of previous ayah
+  - Second half → Added to start of next ayah
 
 **Example**:
 ```
@@ -192,6 +217,28 @@ After gap splitting:
 Ayah 1: [00:00:00 - 00:00:06]  (+1 second from gap)
 Ayah 2: [00:00:06 - 00:00:12]  (+1 second from gap)
 ```
+
+#### 2. **Zero-Gap Detection (NEW)**
+When consecutive ayahs have **0ms gap** (no silence detected):
+- 🔍 **Triggers intelligent search**: Searches ±10 seconds around cutoff point
+- 🎯 **Finds natural silence**: Detects silence gaps (500ms minimum, -40dBFS threshold)
+- ✂️ **Uses closest silence**: Splits at the midpoint of nearest silence gap
+- ⚠️ **Uncertainty flag**: If no silence found, marks cutoff as uncertain
+
+**Example**:
+```
+⚠ Ayah 5: 0ms gap detected with previous ayah!
+  Searching for silence around 128593ms (±10000ms)
+  ✓ Found silence at 130245ms (distance: 1652ms from cutoff)
+  ✓ Adjusted split point to 130245ms (silence-based)
+```
+
+**Benefits**:
+- ✅ Prevents mid-sentence cuts
+- ✅ Finds natural pauses in recitation
+- ✅ Avoids cutting off long ayahs
+- ✅ Maintains recitation flow
+- ✅ Flags uncertain splits for review
 
 ### Quality Preservation
 
@@ -395,6 +442,14 @@ segment.export(buffer, format='mp3', bitrate='192k')
 - MP3 uses 192kbps bitrate by default
 
 ## Version History
+
+- **v2.2.0** (Current): Intelligent gap detection
+  - ✨ Zero-gap detection with ±10s silence search
+  - ✨ Automatic silence-based split point adjustment
+  - ✨ Uncertainty flagging for unresolved cutoffs
+  - ✨ Enhanced metadata with cutoff information
+  - 🐛 Fixed mid-sentence ayah cuts
+  - 🐛 Prevented long ayah truncation
 
 - **v2.1.0** (feat-exp/split-audio-by-ayah): Initial implementation
   - Basic audio splitting functionality
