@@ -60,3 +60,4 @@ quran_simple.txt
 # Logs
 logs/
 *.log
+.debug
