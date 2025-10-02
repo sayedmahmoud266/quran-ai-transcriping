@@ -10,12 +10,14 @@ import logging
 from logging.handlers import RotatingFileHandler
 
 from fastapi import FastAPI, File, UploadFile, HTTPException, Form
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.audio_processor import audio_processor
 from app.transcription_service import transcription_service
 from app.audio_splitter import audio_splitter
+from app.database import database, JobStatus
+from app.background_worker import background_worker
 
 # Configure logging with both console and file handlers
 log_dir = Path("logs")
@@ -85,7 +87,209 @@ async def health_check():
     return {
         "status": "healthy",
         "model": transcription_service.MODEL_NAME,
-        "device": transcription_service.device
+        "device": transcription_service.device,
+        "worker_running": background_worker.is_running,
+        "worker_processing": background_worker.is_processing
+    }
+
+
+@app.post("/transcribe/async")
+async def transcribe_async(
+    audio_file: UploadFile = File(..., description="Audio file containing Quran recitation")
+):
+    """
+    Submit audio file for async transcription processing.
+    
+    Returns immediately with a job_id that can be used to check status and download results.
+    
+    Args:
+        audio_file: Uploaded audio file
+        
+    Returns:
+        JSON with job_id and status
+    """
+    try:
+        # Validate file
+        if not audio_file:
+            raise HTTPException(status_code=400, detail="No audio file provided")
+        
+        # Get file extension
+        file_ext = Path(audio_file.filename).suffix.lower()
+        
+        # Supported audio formats
+        supported_formats = [
+            '.mp3', '.wav', '.m4a', '.wma', '.aac', 
+            '.flac', '.ogg', '.opus', '.webm'
+        ]
+        
+        if file_ext not in supported_formats:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported audio format: {file_ext}"
+            )
+        
+        logger.info(f"Received async transcription request: {audio_file.filename}")
+        
+        # Create uploads directory
+        uploads_dir = Path(__file__).parent.parent / "data" / "uploads"
+        uploads_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Save uploaded file with unique name
+        import uuid
+        unique_filename = f"{uuid.uuid4()}{file_ext}"
+        upload_path = uploads_dir / unique_filename
+        
+        content = await audio_file.read()
+        with open(upload_path, 'wb') as f:
+            f.write(content)
+        
+        logger.info(f"Saved upload to: {upload_path}")
+        
+        # Create job in database
+        job_id = database.create_job(audio_file.filename, str(upload_path))
+        
+        # Trigger background processing
+        background_worker.trigger_processing()
+        
+        return {
+            "success": True,
+            "job_id": job_id,
+            "status": JobStatus.QUEUED,
+            "message": "Job queued for processing"
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error creating async job: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/jobs/{job_id}/status")
+async def get_job_status(job_id: str):
+    """
+    Get the status of a transcription job.
+    
+    Args:
+        job_id: Job ID returned from /transcribe/async
+        
+    Returns:
+        JSON with job status and details
+    """
+    job = database.get_job(job_id)
+    
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    response = {
+        "job_id": job['id'],
+        "status": job['status'],
+        "original_filename": job['original_filename'],
+        "created_at": job['created_at'],
+        "started_at": job['started_at'],
+        "completed_at": job['completed_at']
+    }
+    
+    if job['status'] == JobStatus.FAILED:
+        response['error'] = job['error_message']
+    
+    if job['status'] == JobStatus.COMPLETED:
+        response['download_url'] = f"/jobs/{job_id}/download"
+        response['metadata_url'] = f"/jobs/{job_id}/metadata"
+    
+    return response
+
+
+@app.get("/jobs/{job_id}/download")
+async def download_result(job_id: str):
+    """
+    Download the result zip file for a completed job.
+    
+    Args:
+        job_id: Job ID
+        
+    Returns:
+        Zip file with ayah segments
+    """
+    job = database.get_job(job_id)
+    
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    if job['status'] != JobStatus.COMPLETED:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Job is not completed yet. Current status: {job['status']}"
+        )
+    
+    result_path = Path(job['result_zip_path'])
+    
+    if not result_path.exists():
+        raise HTTPException(status_code=404, detail="Result file not found")
+    
+    return FileResponse(
+        path=result_path,
+        media_type="application/zip",
+        filename=f"{job['original_filename']}_ayahs.zip"
+    )
+
+
+@app.get("/jobs/{job_id}/metadata")
+async def get_metadata(job_id: str):
+    """
+    Get the metadata JSON for a completed job.
+    
+    Args:
+        job_id: Job ID
+        
+    Returns:
+        JSON with transcription and ayah metadata
+    """
+    job = database.get_job(job_id)
+    
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    if job['status'] != JobStatus.COMPLETED:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Job is not completed yet. Current status: {job['status']}"
+        )
+    
+    if not job['metadata_json']:
+        raise HTTPException(status_code=404, detail="Metadata not found")
+    
+    import json
+    metadata = json.loads(job['metadata_json'])
+    
+    return metadata
+
+
+@app.get("/jobs")
+async def list_jobs(limit: int = 100):
+    """
+    List all jobs (most recent first).
+    
+    Args:
+        limit: Maximum number of jobs to return
+        
+    Returns:
+        List of jobs with basic info
+    """
+    jobs = database.get_all_jobs(limit)
+    
+    return {
+        "total": len(jobs),
+        "jobs": [
+            {
+                "job_id": job['id'],
+                "original_filename": job['original_filename'],
+                "status": job['status'],
+                "created_at": job['created_at'],
+                "completed_at": job['completed_at']
+            }
+            for job in jobs
+        ]
     }
 
 
@@ -243,6 +447,11 @@ async def startup_event():
     logger.info("Starting Quran AI Transcription API...")
     logger.info(f"Model: {transcription_service.MODEL_NAME}")
     logger.info(f"Device: {transcription_service.device}")
+    
+    # Start background worker
+    background_worker.start()
+    logger.info("Background worker started")
+    
     logger.info("API is ready to accept requests")
 
 
@@ -250,6 +459,10 @@ async def startup_event():
 async def shutdown_event():
     """Cleanup on shutdown."""
     logger.info("Shutting down Quran AI Transcription API...")
+    
+    # Stop background worker
+    background_worker.stop()
+    logger.info("Background worker stopped")
 
 
 if __name__ == "__main__":
