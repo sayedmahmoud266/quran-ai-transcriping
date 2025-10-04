@@ -256,7 +256,7 @@ ayah_20_end = ayah_20_start + ayah_20_duration
 ---
 
 ### Phase 6: Silence Splitting Logic Update
-**Status**: ⏳ Pending
+**Status**: ✅ COMPLETED (Commit: TBD)
 
 **Objective**: Split silences between consecutive ayahs only at chunk boundaries
 
@@ -269,13 +269,32 @@ ayah_20_end = ayah_20_start + ayah_20_duration
    - Use word-based time calculation within chunk
 
 **Implementation Steps**:
-- [ ] Detect if ayah boundaries align with chunk boundaries
-- [ ] Apply silence splitting only for aligned boundaries
-- [ ] Skip silence splitting for mid-chunk boundaries
-- [ ] Update `_split_silence_between_ayahs()` method
+- ✅ Detect if ayah boundaries align with chunk boundaries
+- ✅ Apply silence splitting only for aligned boundaries
+- ✅ Skip silence splitting for mid-chunk boundaries
+- ✅ Create new chunk-boundary-aware splitting method
 
-**Files to Modify**:
-- `app/transcription_service.py` - Update silence splitting logic
+**Changes Made**:
+- ✅ Created `_check_boundary_alignment()` - detects if timestamp aligns with chunk edge
+- ✅ Created `_apply_silence_splitting()` - intelligent silence splitting
+- ✅ Checks BOTH ayah boundaries (current end + next start)
+- ✅ Only splits silence if BOTH boundaries are at chunk edges
+- ✅ Skips splitting for mid-chunk boundaries (uses Phase 5 timestamps as-is)
+- ✅ 100ms tolerance for boundary detection
+- ✅ Comprehensive logging showing when/why silence is split or skipped
+
+**Logic Flow**:
+```python
+if current_ayah_end_at_chunk_boundary AND next_ayah_start_at_chunk_boundary:
+    # Safe to split - natural pause between chunks
+    split_silence_in_half()
+else:
+    # Mid-chunk boundary - ayahs flow within same chunk
+    keep_calculated_timestamps()
+```
+
+**Files Modified**:
+- `app/transcription_service.py`
 
 ---
 
@@ -346,12 +365,14 @@ If issues arise:
 ✅ **Phase 3**: No duplicate words between consecutive chunks
 ✅ **Phase 4**: Accurate ayah-to-chunk mapping
 ✅ **Phase 5**: Timestamp accuracy improved by > 50%
-⏳ **Phase 6**: Silence splitting only at chunk boundaries
+✅ **Phase 6**: Silence splitting only at chunk boundaries
 
 **Overall Goal**: Achieve > 95% timestamp accuracy for ayah boundaries
 
+🎉 **ALL 6 PHASES COMPLETE!** 🎉
+
 ---
 
-**Last Updated**: 2025-10-04 16:38
-**Current Phase**: Phase 6 - Silence Splitting Logic Update (FINAL PHASE!)
-**Next Action**: Implement chunk-boundary-aware silence splitting
+**Last Updated**: 2025-10-04 16:48
+**Current Phase**: COMPLETED - All 6 phases implemented! 🎉
+**Status**: Ready for testing and deployment

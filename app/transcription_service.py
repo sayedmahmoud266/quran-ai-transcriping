@@ -151,6 +151,9 @@ class TranscriptionService:
                         detail['audio_end_timestamp'] = quran_data._format_timestamp(end_time)
                         logger.info(f"Ayah {ayah_key}: Updated timestamps to {detail['audio_start_timestamp']} - {detail['audio_end_timestamp']}")
             
+            # Apply chunk-boundary-aware silence splitting (Phase 6)
+            details = self._apply_silence_splitting(details, chunk_results)
+            
             # Validate and correct verse boundaries (feedback loop)
             logger.info("Running validation and correction feedback loop...")
             details = self._validate_and_correct_verses(details, combined_transcription, combined_timestamps)
@@ -688,6 +691,100 @@ class TranscriptionService:
         logger.info(f"  Word-based time: {start_time:.2f}s - {end_time:.2f}s")
         
         return (start_time, end_time)
+    
+    def _check_boundary_alignment(
+        self,
+        ayah_timestamp: float,
+        chunk_results: List[Dict],
+        tolerance_ms: float = 100.0
+    ) -> bool:
+        """
+        Check if an ayah boundary aligns with a chunk boundary.
+        
+        Args:
+            ayah_timestamp: Ayah boundary time in seconds
+            chunk_results: List of chunk transcription results
+            tolerance_ms: Tolerance in milliseconds for alignment detection
+            
+        Returns:
+            True if ayah boundary aligns with a chunk boundary
+        """
+        tolerance_sec = tolerance_ms / 1000.0
+        
+        for chunk in chunk_results:
+            chunk_start = chunk['chunk_start_time']
+            chunk_end = chunk['chunk_end_time']
+            
+            # Check if ayah timestamp is close to chunk start or end
+            if abs(ayah_timestamp - chunk_start) <= tolerance_sec:
+                return True
+            if abs(ayah_timestamp - chunk_end) <= tolerance_sec:
+                return True
+        
+        return False
+    
+    def _apply_silence_splitting(
+        self,
+        details: List[Dict],
+        chunk_results: List[Dict]
+    ) -> List[Dict]:
+        """
+        Apply silence splitting between consecutive ayahs ONLY at chunk boundaries.
+        
+        Phase 6: If ayah boundary is within a chunk (not at boundary),
+        do NOT split silence - use the calculated timestamp as-is.
+        
+        Args:
+            details: List of verse details with timestamps
+            chunk_results: List of chunk transcription results
+            
+        Returns:
+            Updated list of verse details with adjusted timestamps
+        """
+        if len(details) <= 1:
+            return details
+        
+        logger.info("=== Phase 6: Chunk-Boundary-Aware Silence Splitting ===")
+        
+        updated_details = []
+        
+        for i, detail in enumerate(details):
+            updated_detail = detail.copy()
+            
+            # Convert timestamps to seconds
+            def ts_to_sec(ts_str):
+                parts = ts_str.split(':')
+                return float(parts[0]) * 3600 + float(parts[1]) * 60 + float(parts[2])
+            
+            current_end = ts_to_sec(detail['audio_end_timestamp'])
+            
+            # Check if there's a next ayah
+            if i < len(details) - 1:
+                next_start = ts_to_sec(details[i + 1]['audio_start_timestamp'])
+                gap = next_start - current_end
+                
+                # Only split silence if BOTH boundaries align with chunk boundaries
+                current_end_aligned = self._check_boundary_alignment(current_end, chunk_results)
+                next_start_aligned = self._check_boundary_alignment(next_start, chunk_results)
+                
+                if current_end_aligned and next_start_aligned and gap > 0:
+                    # Both boundaries are at chunk edges - safe to split silence
+                    silence_midpoint = current_end + (gap / 2.0)
+                    
+                    from app.quran_data import quran_data
+                    updated_detail['audio_end_timestamp'] = quran_data._format_timestamp(silence_midpoint)
+                    
+                    logger.info(f"Ayah {detail['surah_number']}:{detail['ayah_number']}: "
+                               f"Split silence at chunk boundary (gap: {gap:.2f}s)")
+                else:
+                    # At least one boundary is mid-chunk - do NOT split
+                    if gap > 0:
+                        logger.info(f"Ayah {detail['surah_number']}:{detail['ayah_number']}: "
+                                   f"Skipping silence split (mid-chunk boundary, gap: {gap:.2f}s)")
+            
+            updated_details.append(updated_detail)
+        
+        return updated_details
     
     def _combine_timestamps(self, chunk_results: List[Dict]) -> List[Dict]:
         """
