@@ -248,8 +248,10 @@ class TranscriptionService:
             
             return {
                 "transcription": transcription,
-                "transcribed_text": transcription,  # Explicit field for chunk tracking
-                "word_count": len(words),           # Track word count per chunk
+                "original_text": transcription,     # FULL original text - preserved for timestamp calculations
+                "transcribed_text": transcription,  # Deduplicated text - used for verse matching
+                "original_word_count": len(words),  # Original word count (never changes)
+                "word_count": len(words),           # Current word count (updated after deduplication)
                 "timestamps": timestamps,
                 "chunk_index": chunk_index,
                 "chunk_start_time": chunk_start_time,
@@ -299,18 +301,22 @@ class TranscriptionService:
     def _remove_duplicate_words(self, chunk_results: List[Dict]) -> List[Dict]:
         """
         Remove duplicate words at boundaries between consecutive chunks.
-        Updates transcribed_text, word_count, and timestamps for affected chunks.
+        
+        IMPORTANT: Only modifies transcribed_text (used for verse matching).
+        Preserves original_text (used for timestamp calculations and chunk identification).
         
         Args:
             chunk_results: List of chunk transcription results
             
         Returns:
-            Updated list of chunk results with duplicates removed
+            Updated list of chunk results with duplicates removed from transcribed_text
         """
         if len(chunk_results) <= 1:
             return chunk_results
         
         logger.info("=== Removing Duplicate Words Between Chunks ===")
+        logger.info("NOTE: Only removing from searchable text (transcribed_text)")
+        logger.info("      Original text (original_text) preserved for timestamp calculations")
         
         updated_results = []
         
@@ -326,23 +332,22 @@ class TranscriptionService:
                 )
                 
                 if overlap > 0:
-                    # Remove overlapping words from the start of current chunk
+                    # Remove overlapping words from transcribed_text ONLY
+                    # original_text remains unchanged!
                     words = current_chunk["transcribed_text"].split()
                     remaining_words = words[overlap:]
                     
                     logger.info(f"Chunk {i}: Found {overlap} duplicate words with previous chunk")
-                    logger.info(f"  Removed: {' '.join(words[:overlap])}")
-                    logger.info(f"  Kept: {' '.join(remaining_words) if remaining_words else '[empty]'}")
+                    logger.info(f"  Removed from searchable text: {' '.join(words[:overlap])}")
+                    logger.info(f"  Searchable text now: {' '.join(remaining_words) if remaining_words else '[empty]'}")
+                    logger.info(f"  Original text preserved: {current_chunk['original_text'][:50]}...")
                     
-                    # Update transcribed_text
+                    # Update transcribed_text (searchable version)
                     current_chunk["transcribed_text"] = ' '.join(remaining_words)
                     current_chunk["word_count"] = len(remaining_words)
                     
-                    # Update timestamps - remove first N timestamps
-                    if "timestamps" in current_chunk and len(current_chunk["timestamps"]) > overlap:
-                        current_chunk["timestamps"] = current_chunk["timestamps"][overlap:]
-                    else:
-                        current_chunk["timestamps"] = []
+                    # NOTE: original_text and original_word_count remain unchanged
+                    # NOTE: timestamps remain unchanged (based on original_text)
                     
                     # Keep transcription field for backward compatibility
                     current_chunk["transcription"] = current_chunk["transcribed_text"]
@@ -354,7 +359,8 @@ class TranscriptionService:
             chunk_results[i]["word_count"] - updated_results[i]["word_count"]
             for i in range(len(chunk_results))
         )
-        logger.info(f"Total duplicate words removed: {total_duplicates}")
+        logger.info(f"Total duplicate words removed from searchable text: {total_duplicates}")
+        logger.info(f"Original text corpus preserved for all {len(updated_results)} chunks")
         
         return updated_results
     

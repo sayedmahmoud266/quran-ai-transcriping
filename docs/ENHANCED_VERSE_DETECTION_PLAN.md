@@ -112,11 +112,25 @@ chunk_301 = "كَمَآ أَتَمَّهَا عَلَىٰٓ أَبَوَيۡكَ
 
 **Changes Made**:
 - ✅ Implemented `_find_word_overlap()` - finds longest matching suffix/prefix
-- ✅ Implemented `_remove_duplicate_words()` - removes duplicates and updates metadata
+- ✅ Implemented `_remove_duplicate_words()` - removes duplicates from searchable text only
 - ✅ Integrated into main transcription pipeline after chunk processing
 - ✅ Updated combined transcription to use deduplicated text
 - ✅ Added detailed logging showing removed duplicates
-- ✅ Maintains word_count, timestamps, and transcribed_text consistency
+- ✅ **CRITICAL**: Maintains TWO versions of text per chunk:
+  - `original_text` - Full corpus, preserved for timestamp calculations
+  - `transcribed_text` - Deduplicated, used for verse matching
+- ✅ Preserves `original_word_count` and timestamps based on original text
+
+**Data Structure**:
+```python
+chunk = {
+    "original_text": "وَيُتِمُّ نِعۡمَتَهُۥ عَلَيۡكَ وَعَلَىٰٓ ءَالِ يَعۡقُوبَ كَمَآ أَتَمَّهَا",  # FULL - never modified
+    "transcribed_text": "كَمَآ أَتَمَّهَا",  # DEDUPLICATED - used for matching
+    "original_word_count": 10,  # Based on original_text
+    "word_count": 2,  # Based on transcribed_text (after deduplication)
+    "timestamps": [...],  # Based on original_text positions
+}
+```
 
 **Files Modified**:
 - `app/transcription_service.py`
