@@ -6,6 +6,7 @@ This module provides functionality to match transcribed text to Quran verses.
 import json
 import re
 import os
+from pathlib import Path
 from typing import List, Dict, Optional, Tuple
 from difflib import SequenceMatcher
 import requests
