@@ -161,7 +161,7 @@ curl "http://localhost:8000/jobs/a1b2c3d4-e5f6-7890-abcd-ef1234567890/metadata"
 
 **Endpoint**: `GET /jobs?limit=100`
 
-List all jobs (most recent first).
+List all jobs (most recent first) with detailed information and navigation URLs.
 
 **Request**:
 ```bash
@@ -171,32 +171,62 @@ curl "http://localhost:8000/jobs?limit=50"
 **Response**:
 ```json
 {
-  "total": 3,
+  "total": 4,
   "jobs": [
     {
       "job_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
       "original_filename": "surah_12.mp3",
       "status": "completed",
       "created_at": "2025-10-03T00:00:00",
-      "completed_at": "2025-10-03T00:02:30"
+      "started_at": "2025-10-03T00:00:15",
+      "completed_at": "2025-10-03T00:02:30",
+      "download_url": "/jobs/a1b2c3d4-e5f6-7890-abcd-ef1234567890/download",
+      "metadata_url": "/jobs/a1b2c3d4-e5f6-7890-abcd-ef1234567890/metadata",
+      "status_url": "/jobs/a1b2c3d4-e5f6-7890-abcd-ef1234567890/status"
     },
     {
       "job_id": "b2c3d4e5-f6g7-8901-bcde-fg2345678901",
       "original_filename": "surah_55.mp3",
       "status": "processing",
       "created_at": "2025-10-03T00:05:00",
-      "completed_at": null
+      "started_at": "2025-10-03T00:05:10",
+      "completed_at": null,
+      "status_url": "/jobs/b2c3d4e5-f6g7-8901-bcde-fg2345678901/status"
     },
     {
       "job_id": "c3d4e5f6-g7h8-9012-cdef-gh3456789012",
       "original_filename": "surah_18.mp3",
       "status": "queued",
       "created_at": "2025-10-03T00:10:00",
-      "completed_at": null
+      "started_at": null,
+      "completed_at": null,
+      "status_url": "/jobs/c3d4e5f6-g7h8-9012-cdef-gh3456789012/status"
+    },
+    {
+      "job_id": "d4e5f6g7-h8i9-0123-defg-hi4567890123",
+      "original_filename": "surah_97.mp3",
+      "status": "failed",
+      "created_at": "2025-10-03T00:12:00",
+      "started_at": "2025-10-03T00:12:05",
+      "completed_at": "2025-10-03T00:12:10",
+      "error_message": "Unsupported audio format",
+      "status_url": "/jobs/d4e5f6g7-h8i9-0123-defg-hi4567890123/status"
     }
   ]
 }
 ```
+
+**Response Fields**:
+- `job_id`: Unique job identifier
+- `original_filename`: Original uploaded filename
+- `status`: Current job status (queued/processing/completed/failed)
+- `created_at`: When the job was created
+- `started_at`: When processing started (null if not started)
+- `completed_at`: When job finished (null if not finished)
+- `status_url`: URL to check job status (available for all jobs)
+- `download_url`: URL to download result zip (only for completed jobs)
+- `metadata_url`: URL to get metadata JSON (only for completed jobs)
+- `error_message`: Error details (only for failed jobs)
 
 ### 6. Resume Job Queue
 

@@ -268,28 +268,44 @@ async def get_metadata(job_id: str):
 @app.get("/jobs")
 async def list_jobs(limit: int = 100):
     """
-    List all jobs (most recent first).
+    List all jobs (most recent first) with detailed information.
     
     Args:
         limit: Maximum number of jobs to return
         
     Returns:
-        List of jobs with basic info
+        List of jobs with detailed info including URLs for completed jobs
     """
     jobs = database.get_all_jobs(limit)
     
+    job_list = []
+    for job in jobs:
+        job_info = {
+            "job_id": job['id'],
+            "original_filename": job['original_filename'],
+            "status": job['status'],
+            "created_at": job['created_at'],
+            "started_at": job['started_at'],
+            "completed_at": job['completed_at']
+        }
+        
+        # Add error message for failed jobs
+        if job['status'] == JobStatus.FAILED and job.get('error_message'):
+            job_info['error_message'] = job['error_message']
+        
+        # Add URLs for completed jobs
+        if job['status'] == JobStatus.COMPLETED:
+            job_info['download_url'] = f"/jobs/{job['id']}/download"
+            job_info['metadata_url'] = f"/jobs/{job['id']}/metadata"
+        
+        # Add status URL for all jobs
+        job_info['status_url'] = f"/jobs/{job['id']}/status"
+        
+        job_list.append(job_info)
+    
     return {
         "total": len(jobs),
-        "jobs": [
-            {
-                "job_id": job['id'],
-                "original_filename": job['original_filename'],
-                "status": job['status'],
-                "created_at": job['created_at'],
-                "completed_at": job['completed_at']
-            }
-            for job in jobs
-        ]
+        "jobs": job_list
     }
 
 
