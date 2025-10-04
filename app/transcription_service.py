@@ -122,15 +122,34 @@ class TranscriptionService:
             details = self._create_verse_details(combined_transcription, combined_timestamps, chunk_info)
             
             # Create ayah-to-chunk mapping (many-to-many relationship)
-            # This will be used in Phase 5 for accurate timestamp calculation
+            # This will be used for accurate timestamp calculation
             matched_verses = quran_data.match_verses(combined_transcription, chunk_info)
             ayah_chunk_mapping, chunk_ayah_mapping = self._map_ayahs_to_chunks(matched_verses, chunk_results)
             
-            # Store mappings in details for later use
+            # Calculate accurate timestamps using chunk mappings (Phase 5)
+            logger.info("=== Calculating Accurate Timestamps ===")
             for detail in details:
                 ayah_key = f"{detail['surah_number']}:{detail['ayah_number']}"
+                
                 if ayah_key in ayah_chunk_mapping:
+                    # Store mapping for reference
                     detail['chunk_mapping'] = ayah_chunk_mapping[ayah_key]
+                    
+                    # Calculate accurate timestamps based on chunk relationships
+                    ayah_text = detail.get('ayah_text_tashkeel', '')
+                    start_time, end_time = self._calculate_ayah_timestamps(
+                        ayah_key,
+                        ayah_text,
+                        ayah_chunk_mapping,
+                        chunk_ayah_mapping,
+                        chunk_results
+                    )
+                    
+                    # Update timestamps in detail
+                    if start_time > 0 or end_time > 0:
+                        detail['audio_start_timestamp'] = quran_data._format_timestamp(start_time)
+                        detail['audio_end_timestamp'] = quran_data._format_timestamp(end_time)
+                        logger.info(f"Ayah {ayah_key}: Updated timestamps to {detail['audio_start_timestamp']} - {detail['audio_end_timestamp']}")
             
             # Validate and correct verse boundaries (feedback loop)
             logger.info("Running validation and correction feedback loop...")
@@ -458,6 +477,217 @@ class TranscriptionService:
                 logger.info(f"  Chunk {chunk_idx}: {len(ayah_keys)} ayahs - {', '.join(ayah_keys)}")
         
         return ayah_chunk_mapping, chunk_ayah_mapping
+    
+    def _calculate_ayah_timestamps(
+        self, 
+        ayah_key: str,
+        ayah_text: str,
+        ayah_chunk_mapping: Dict,
+        chunk_ayah_mapping: Dict,
+        chunk_results: List[Dict]
+    ) -> tuple:
+        """
+        Calculate accurate timestamps for an ayah based on its chunk relationships.
+        
+        Implements 4 scenarios:
+        1. Ayah completely in one chunk (no other ayahs) - use chunk boundaries
+        2. Ayah spans multiple chunks (no other ayahs) - use first/last chunk boundaries
+        3. Ayah in one chunk (with other ayahs) - proportional time split by word count
+        4. Ayah spans multiple chunks (with other ayahs) - word position-based calculation
+        
+        Args:
+            ayah_key: Ayah identifier (e.g., "55:1")
+            ayah_text: Full ayah text
+            ayah_chunk_mapping: Mapping of ayahs to chunks
+            chunk_ayah_mapping: Mapping of chunks to ayahs
+            chunk_results: List of chunk transcription results
+            
+        Returns:
+            Tuple of (start_time, end_time) in seconds
+        """
+        from app.quran_data import quran_data
+        
+        if ayah_key not in ayah_chunk_mapping:
+            logger.warning(f"Ayah {ayah_key} not found in chunk mapping, using fallback")
+            return (0.0, 0.0)
+        
+        ayah_info = ayah_chunk_mapping[ayah_key]
+        chunk_indices = ayah_info['chunks']
+        
+        if not chunk_indices:
+            return (0.0, 0.0)
+        
+        # Normalize ayah text for matching
+        ayah_normalized = quran_data.normalize_arabic_text(ayah_text)
+        ayah_words = ayah_normalized.split()
+        
+        # SCENARIO 1: Ayah completely in ONE chunk with NO other ayahs
+        if len(chunk_indices) == 1:
+            chunk_idx = chunk_indices[0]
+            chunk = chunk_results[chunk_idx]
+            ayahs_in_chunk = chunk_ayah_mapping.get(chunk_idx, [])
+            
+            if len(ayahs_in_chunk) == 1:
+                # Perfect! Use chunk boundaries directly
+                logger.info(f"Ayah {ayah_key}: Scenario 1 - Single chunk, no other ayahs")
+                return (chunk['chunk_start_time'], chunk['chunk_end_time'])
+            
+            # SCENARIO 3: Ayah in ONE chunk WITH other ayahs
+            else:
+                logger.info(f"Ayah {ayah_key}: Scenario 3 - Single chunk with {len(ayahs_in_chunk)} ayahs")
+                return self._calculate_proportional_time(
+                    ayah_key, ayah_words, chunk, ayahs_in_chunk, 
+                    ayah_chunk_mapping, chunk_results
+                )
+        
+        # SCENARIO 2 or 4: Ayah spans MULTIPLE chunks
+        else:
+            # Check if ayah is the ONLY ayah in all its chunks
+            has_other_ayahs = False
+            for chunk_idx in chunk_indices:
+                ayahs_in_chunk = chunk_ayah_mapping.get(chunk_idx, [])
+                if len(ayahs_in_chunk) > 1:
+                    has_other_ayahs = True
+                    break
+            
+            if not has_other_ayahs:
+                # SCENARIO 2: Ayah spans multiple chunks, NO other ayahs
+                logger.info(f"Ayah {ayah_key}: Scenario 2 - Spans {len(chunk_indices)} chunks, no other ayahs")
+                first_chunk = chunk_results[chunk_indices[0]]
+                last_chunk = chunk_results[chunk_indices[-1]]
+                return (first_chunk['chunk_start_time'], last_chunk['chunk_end_time'])
+            
+            # SCENARIO 4: Ayah spans multiple chunks WITH other ayahs
+            else:
+                logger.info(f"Ayah {ayah_key}: Scenario 4 - Spans {len(chunk_indices)} chunks with other ayahs")
+                return self._calculate_word_position_time(
+                    ayah_key, ayah_words, chunk_indices, chunk_results
+                )
+    
+    def _calculate_proportional_time(
+        self,
+        ayah_key: str,
+        ayah_words: List[str],
+        chunk: Dict,
+        ayahs_in_chunk: List[str],
+        ayah_chunk_mapping: Dict,
+        chunk_results: List[Dict]
+    ) -> tuple:
+        """
+        Scenario 3: Calculate time proportionally when ayah shares a chunk with other ayahs.
+        Split chunk time based on word count ratios.
+        """
+        chunk_duration = chunk['chunk_duration']
+        chunk_start = chunk['chunk_start_time']
+        
+        # Calculate total words in chunk from all ayahs
+        total_words = 0
+        ayah_word_counts = {}
+        
+        for other_ayah_key in ayahs_in_chunk:
+            if other_ayah_key in ayah_chunk_mapping:
+                word_count = ayah_chunk_mapping[other_ayah_key]['word_count']
+                ayah_word_counts[other_ayah_key] = word_count
+                total_words += word_count
+        
+        if total_words == 0:
+            return (chunk_start, chunk_start + chunk_duration)
+        
+        # Calculate this ayah's proportion
+        ayah_word_count = len(ayah_words)
+        ayah_proportion = ayah_word_count / total_words
+        ayah_duration = chunk_duration * ayah_proportion
+        
+        # Find position of this ayah among ayahs in chunk
+        ayah_position = ayahs_in_chunk.index(ayah_key)
+        
+        # Calculate start time based on previous ayahs
+        time_before = 0.0
+        for i in range(ayah_position):
+            prev_ayah = ayahs_in_chunk[i]
+            if prev_ayah in ayah_word_counts:
+                prev_proportion = ayah_word_counts[prev_ayah] / total_words
+                time_before += chunk_duration * prev_proportion
+        
+        start_time = chunk_start + time_before
+        end_time = start_time + ayah_duration
+        
+        logger.info(f"  Proportional split: {ayah_word_count}/{total_words} words = {ayah_proportion:.2%} of chunk")
+        logger.info(f"  Time: {start_time:.2f}s - {end_time:.2f}s (duration: {ayah_duration:.2f}s)")
+        
+        return (start_time, end_time)
+    
+    def _calculate_word_position_time(
+        self,
+        ayah_key: str,
+        ayah_words: List[str],
+        chunk_indices: List[int],
+        chunk_results: List[Dict]
+    ) -> tuple:
+        """
+        Scenario 4: Calculate time based on word positions across multiple chunks.
+        Find first occurrence of first word and last occurrence of last word.
+        """
+        from app.quran_data import quran_data
+        
+        if not ayah_words:
+            first_chunk = chunk_results[chunk_indices[0]]
+            last_chunk = chunk_results[chunk_indices[-1]]
+            return (first_chunk['chunk_start_time'], last_chunk['chunk_end_time'])
+        
+        first_word = ayah_words[0]
+        last_word = ayah_words[-1]
+        
+        start_time = None
+        end_time = None
+        
+        # Find first occurrence of first word
+        for chunk_idx in chunk_indices:
+            chunk = chunk_results[chunk_idx]
+            chunk_normalized = quran_data.normalize_arabic_text(chunk['original_text'])
+            chunk_words = chunk_normalized.split()
+            
+            if first_word in chunk_words:
+                # Found first word, calculate its position
+                word_position = chunk_words.index(first_word)
+                chunk_duration = chunk['chunk_duration']
+                time_per_word = chunk_duration / len(chunk_words) if chunk_words else 0
+                
+                start_time = chunk['chunk_start_time'] + (word_position * time_per_word)
+                logger.info(f"  First word '{first_word}' found at position {word_position} in chunk {chunk_idx}")
+                break
+        
+        # Find last occurrence of last word (search backwards)
+        for chunk_idx in reversed(chunk_indices):
+            chunk = chunk_results[chunk_idx]
+            chunk_normalized = quran_data.normalize_arabic_text(chunk['original_text'])
+            chunk_words = chunk_normalized.split()
+            
+            if last_word in chunk_words:
+                # Found last word, calculate its position
+                # Use last occurrence if word appears multiple times
+                word_positions = [i for i, w in enumerate(chunk_words) if w == last_word]
+                word_position = word_positions[-1] if word_positions else 0
+                
+                chunk_duration = chunk['chunk_duration']
+                time_per_word = chunk_duration / len(chunk_words) if chunk_words else 0
+                
+                end_time = chunk['chunk_start_time'] + ((word_position + 1) * time_per_word)
+                logger.info(f"  Last word '{last_word}' found at position {word_position} in chunk {chunk_idx}")
+                break
+        
+        # Fallback to chunk boundaries if words not found
+        if start_time is None:
+            start_time = chunk_results[chunk_indices[0]]['chunk_start_time']
+            logger.warning(f"  First word not found, using chunk start")
+        
+        if end_time is None:
+            end_time = chunk_results[chunk_indices[-1]]['chunk_end_time']
+            logger.warning(f"  Last word not found, using chunk end")
+        
+        logger.info(f"  Word-based time: {start_time:.2f}s - {end_time:.2f}s")
+        
+        return (start_time, end_time)
     
     def _combine_timestamps(self, chunk_results: List[Dict]) -> List[Dict]:
         """
