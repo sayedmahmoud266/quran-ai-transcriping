@@ -28,15 +28,17 @@ except ImportError as e:
 class QuranData:
     """
     Handles Quran verse data and matching operations.
-    Loads Quran text from Tanzil API and provides verse matching functionality.
+    Loads Quran text from PyQuran and Uthmani text file for complete tashkeel.
     """
     
     def __init__(self):
         self.verses_cache = {}
         self.quran_data = []  # List of all verses with metadata
         self.normalized_verses = {}  # Normalized text for matching
-        self.quran_text_with_tashkeel = {}  # Verse text with diacritics
+        self.quran_text_with_tashkeel = {}  # Verse text with diacritics from PyQuran
+        self.quran_uthmani_text = {}  # Verse text with full Uthmani tashkeel and tilawah marks
         self._load_quran_data()
+        self._load_uthmani_text()
     
     def _load_quran_data(self):
         """
@@ -162,6 +164,64 @@ class QuranData:
                 'word_count': len(normalized.split())
             })
     
+    def _load_uthmani_text(self):
+        """
+        Load Quran text with full Uthmani tashkeel and tilawah marks from res/quran-uthmani_all.txt.
+        Format: surah|ayah|text
+        Note: Surahs (except Fatiha and Tawbah) have Basmala prefixed to ayah 1, which we extract as ayah 0.
+        """
+        try:
+            uthmani_file = Path(__file__).parent.parent / "res" / "quran-uthmani_all.txt"
+            
+            if not uthmani_file.exists():
+                logger.warning(f"Uthmani text file not found at {uthmani_file}")
+                return
+            
+            logger.info(f"Loading Uthmani text from {uthmani_file}")
+            
+            basmala_text = "بِسْمِ ٱللَّهِ ٱلرَّحْمَـٰنِ ٱلرَّحِيمِ"
+            
+            with open(uthmani_file, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    
+                    parts = line.split('|')
+                    if len(parts) != 3:
+                        continue
+                    
+                    try:
+                        surah_num = int(parts[0])
+                        ayah_num = int(parts[1])
+                        ayah_text = parts[2]
+                        
+                        # For surahs except Fatiha (1) and Tawbah (9), ayah 1 has Basmala prefixed
+                        if surah_num not in [1, 9] and ayah_num == 1:
+                            # Check if text starts with Basmala
+                            if ayah_text.startswith(basmala_text):
+                                # Extract Basmala as ayah 0
+                                self.quran_uthmani_text[f"{surah_num}:0"] = basmala_text
+                                
+                                # Remove Basmala from ayah 1 text
+                                ayah_text_without_basmala = ayah_text[len(basmala_text):].strip()
+                                self.quran_uthmani_text[f"{surah_num}:{ayah_num}"] = ayah_text_without_basmala
+                            else:
+                                # No Basmala found, store as is
+                                self.quran_uthmani_text[f"{surah_num}:{ayah_num}"] = ayah_text
+                        else:
+                            # Store as is for Fatiha, Tawbah, and other ayahs
+                            self.quran_uthmani_text[f"{surah_num}:{ayah_num}"] = ayah_text
+                    
+                    except (ValueError, IndexError) as e:
+                        logger.debug(f"Error parsing line: {line} - {e}")
+                        continue
+            
+            logger.info(f"Loaded {len(self.quran_uthmani_text)} Uthmani verses")
+            
+        except Exception as e:
+            logger.error(f"Error loading Uthmani text: {e}", exc_info=True)
+    
     def normalize_arabic_text(self, text: str) -> str:
         """
         Normalize Arabic text by removing diacritics and extra spaces.
@@ -185,10 +245,21 @@ class QuranData:
     
     def get_verse_with_tashkeel(self, surah: int, ayah: int) -> str:
         """
-        Get verse text with tashkeel (diacritics).
+        Get verse text with full Uthmani tashkeel and tilawah marks.
+        Falls back to PyQuran text if Uthmani text is not available.
         """
         verse_key = f"{surah}:{ayah}"
-        return self.quran_text_with_tashkeel.get(verse_key, f"[Verse {surah}:{ayah}]")
+        
+        # Try Uthmani text first (has full tashkeel and tilawah marks)
+        if verse_key in self.quran_uthmani_text:
+            return self.quran_uthmani_text[verse_key]
+        
+        # Fallback to PyQuran text
+        if verse_key in self.quran_text_with_tashkeel:
+            return self.quran_text_with_tashkeel[verse_key]
+        
+        # Last resort
+        return f"[Verse {surah}:{ayah}]"
     
     def count_words(self, text: str) -> int:
         """Count words in Arabic text."""
