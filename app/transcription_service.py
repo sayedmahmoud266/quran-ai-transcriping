@@ -93,6 +93,15 @@ class TranscriptionService:
                 if chunk_result:
                     chunk_results.append(chunk_result)
             
+            # Log chunk summary
+            logger.info(f"=== Chunk Summary ===")
+            logger.info(f"Total chunks: {len(chunk_results)}")
+            total_words = sum(r.get("word_count", 0) for r in chunk_results)
+            logger.info(f"Total words across all chunks: {total_words}")
+            for r in chunk_results:
+                logger.info(f"  Chunk {r['chunk_index']}: {r['word_count']} words, "
+                           f"{r['chunk_duration']:.2f}s, text: {r['transcribed_text'][:50]}...")
+            
             # Combine all chunk results
             combined_transcription = " ".join([r["transcription"] for r in chunk_results])
             combined_timestamps = self._combine_timestamps(chunk_results)
@@ -210,7 +219,10 @@ class TranscriptionService:
             if not transcription.strip():
                 return None
             
-            logger.info(f"Chunk {chunk_index}: {transcription}")
+            # Log chunk information with word count
+            words = transcription.split()
+            logger.info(f"Chunk {chunk_index} ({chunk_start_time:.2f}s - {chunk_start_time + len(chunk_audio)/sample_rate:.2f}s): "
+                       f"{len(words)} words - {transcription[:100]}{'...' if len(transcription) > 100 else ''}")
             
             # Create timestamps for this chunk
             chunk_duration = len(chunk_audio) / sample_rate
@@ -228,10 +240,13 @@ class TranscriptionService:
             
             return {
                 "transcription": transcription,
+                "transcribed_text": transcription,  # Explicit field for chunk tracking
+                "word_count": len(words),           # Track word count per chunk
                 "timestamps": timestamps,
                 "chunk_index": chunk_index,
                 "chunk_start_time": chunk_start_time,
-                "chunk_end_time": chunk_start_time + chunk_duration
+                "chunk_end_time": chunk_start_time + chunk_duration,
+                "chunk_duration": chunk_duration
             }
             
         except Exception as e:

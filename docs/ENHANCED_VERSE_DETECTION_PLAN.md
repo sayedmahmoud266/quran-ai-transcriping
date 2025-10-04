@@ -27,15 +27,15 @@ This document tracks the implementation of the enhanced silence and verse detect
 ---
 
 ### Phase 2: Per-Chunk Transcription Tracking
-**Status**: 🔄 In Progress
+**Status**: ✅ COMPLETED (Commit: TBD)
 
 **Objective**: Track transcribed text for each audio chunk
 
 **Tasks**:
-- [ ] Add `transcribed_text` field to chunk dictionary
-- [ ] Store chunk-level transcription in chunk results
-- [ ] Maintain chunk metadata throughout processing pipeline
-- [ ] Update chunk result structure to include:
+- ✅ Add `transcribed_text` field to chunk dictionary
+- ✅ Store chunk-level transcription in chunk results
+- ✅ Maintain chunk metadata throughout processing pipeline
+- ✅ Update chunk result structure to include:
   ```python
   {
       "chunk_index": int,
@@ -48,11 +48,17 @@ This document tracks the implementation of the enhanced silence and verse detect
   }
   ```
 
-**Files to Modify**:
-- `app/transcription_service.py` - Update `_transcribe_chunk()` method
-- `app/transcription_service.py` - Update chunk processing loop
+**Changes Made**:
+- ✅ Updated `_transcribe_chunk()` to include `transcribed_text` and `word_count` fields
+- ✅ Added `chunk_duration` field for easier calculations
+- ✅ Enhanced logging to show chunk details (time range, word count, text preview)
+- ✅ Added chunk summary logging after all chunks processed
+- ✅ Maintained backward compatibility with existing code
 
-**Expected Output**:
+**Files Modified**:
+- `app/transcription_service.py`
+
+**Actual Output**:
 ```python
 chunks = [
     {
@@ -294,7 +300,7 @@ If issues arise:
 ## Success Criteria
 
 ✅ **Phase 1**: Chunks >= 3 seconds are never merged
-⏳ **Phase 2**: Each chunk has transcribed_text field
+✅ **Phase 2**: Each chunk has transcribed_text field
 ⏳ **Phase 3**: No duplicate words between consecutive chunks
 ⏳ **Phase 4**: Accurate ayah-to-chunk mapping
 ⏳ **Phase 5**: Timestamp accuracy improved by > 50%
@@ -304,6 +310,6 @@ If issues arise:
 
 ---
 
-**Last Updated**: 2025-10-04 16:19
-**Current Phase**: Phase 2 - Per-Chunk Transcription Tracking
-**Next Action**: Add transcribed_text field to chunk results
+**Last Updated**: 2025-10-04 16:22
+**Current Phase**: Phase 3 - Duplicate Word Removal
+**Next Action**: Implement duplicate word detection algorithm
