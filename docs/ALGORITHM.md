@@ -360,5 +360,5 @@ This algorithm is part of the Quran AI Transcription project.
 
 ---
 
-**Last Updated:** 2025-10-01
-**Version:** 2.0.0
+**Last Updated:** 2025-10-04
+**Version:** 2.3.0
