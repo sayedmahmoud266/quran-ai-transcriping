@@ -128,13 +128,13 @@ class TranscriptionService:
             
             # Calculate accurate timestamps using chunk mappings (Phase 5)
             logger.info("=== Calculating Accurate Timestamps ===")
-            for detail in details:
+            total_audio_duration = chunk_results[-1]['chunk_end_time'] if chunk_results else 0
+            
+            for idx, detail in enumerate(details):
                 ayah_key = f"{detail['surah_number']}:{detail['ayah_number']}"
+                is_last_ayah = (idx == len(details) - 1)
                 
                 if ayah_key in ayah_chunk_mapping:
-                    # Store mapping for reference
-                    detail['chunk_mapping'] = ayah_chunk_mapping[ayah_key]
-                    
                     # Calculate accurate timestamps based on chunk relationships
                     ayah_text = detail.get('ayah_text_tashkeel', '')
                     start_time, end_time = self._calculate_ayah_timestamps(
@@ -145,11 +145,26 @@ class TranscriptionService:
                         chunk_results
                     )
                     
+                    # ENHANCEMENT: If last ayah, extend to end of audio
+                    if is_last_ayah and end_time < total_audio_duration:
+                        logger.info(f"Ayah {ayah_key}: Last ayah - extending to end of audio ({total_audio_duration:.2f}s)")
+                        end_time = total_audio_duration
+                    
                     # Update timestamps in detail
                     if start_time > 0 or end_time > 0:
                         detail['audio_start_timestamp'] = quran_data._format_timestamp(start_time)
                         detail['audio_end_timestamp'] = quran_data._format_timestamp(end_time)
                         logger.info(f"Ayah {ayah_key}: Updated timestamps to {detail['audio_start_timestamp']} - {detail['audio_end_timestamp']}")
+                    
+                    # Build enhanced chunk_mapping array
+                    detail['chunk_mapping'] = self._build_enhanced_chunk_mapping(
+                        ayah_key,
+                        ayah_text,
+                        ayah_chunk_mapping,
+                        chunk_results,
+                        start_time,
+                        end_time
+                    )
             
             # Apply chunk-boundary-aware silence splitting (Phase 6)
             details = self._apply_silence_splitting(details, chunk_results)
@@ -480,6 +495,87 @@ class TranscriptionService:
                 logger.info(f"  Chunk {chunk_idx}: {len(ayah_keys)} ayahs - {', '.join(ayah_keys)}")
         
         return ayah_chunk_mapping, chunk_ayah_mapping
+    
+    def _build_enhanced_chunk_mapping(
+        self,
+        ayah_key: str,
+        ayah_text: str,
+        ayah_chunk_mapping: Dict,
+        chunk_results: List[Dict],
+        ayah_start_time: float,
+        ayah_end_time: float
+    ) -> List[Dict]:
+        """
+        Build enhanced chunk mapping array with detailed information.
+        
+        Args:
+            ayah_key: Ayah identifier (e.g., "55:1")
+            ayah_text: Full ayah text
+            ayah_chunk_mapping: Mapping of ayahs to chunks
+            chunk_results: List of chunk transcription results
+            ayah_start_time: Ayah start time in seconds
+            ayah_end_time: Ayah end time in seconds
+            
+        Returns:
+            List of detailed chunk mapping dictionaries
+        """
+        from app.quran_data import quran_data
+        
+        if ayah_key not in ayah_chunk_mapping:
+            return []
+        
+        ayah_info = ayah_chunk_mapping[ayah_key]
+        chunk_indices = ayah_info['chunks']
+        
+        ayah_normalized = quran_data.normalize_arabic_text(ayah_text)
+        ayah_words = ayah_normalized.split()
+        
+        enhanced_mapping = []
+        cumulative_word_index = 0
+        
+        for chunk_idx in chunk_indices:
+            chunk = chunk_results[chunk_idx]
+            chunk_text = chunk['original_text']
+            chunk_normalized = quran_data.normalize_arabic_text(chunk_text)
+            chunk_words = chunk_normalized.split()
+            
+            # Find which ayah words are in this chunk
+            chunk_ayah_words = [w for w in ayah_words if w in chunk_words]
+            chunk_word_count = len(chunk_ayah_words)
+            
+            # Calculate word indices
+            chunk_start_word_index = cumulative_word_index
+            chunk_end_word_index = cumulative_word_index + chunk_word_count - 1 if chunk_word_count > 0 else cumulative_word_index
+            
+            # Calculate absolute timestamps (relative to full audio)
+            chunk_start_absolute_ms = int(chunk['chunk_start_time'] * 1000)
+            chunk_end_absolute_ms = int(chunk['chunk_end_time'] * 1000)
+            
+            # Calculate relative timestamps (relative to ayah audio)
+            chunk_start_relative_ms = int((chunk['chunk_start_time'] - ayah_start_time) * 1000)
+            chunk_end_relative_ms = int((chunk['chunk_end_time'] - ayah_start_time) * 1000)
+            
+            # Clamp relative timestamps to ayah boundaries
+            chunk_start_relative_ms = max(0, chunk_start_relative_ms)
+            ayah_duration_ms = int((ayah_end_time - ayah_start_time) * 1000)
+            chunk_end_relative_ms = min(ayah_duration_ms, chunk_end_relative_ms)
+            
+            enhanced_mapping.append({
+                "chunk_index": chunk_idx,
+                "chunk_text": chunk_text,
+                "chunk_normalized_text": chunk_normalized,
+                "chunk_start_word_index": chunk_start_word_index,
+                "chunk_end_word_index": chunk_end_word_index,
+                "chunk_word_count": chunk_word_count,
+                "chunk_start_relative_ms": chunk_start_relative_ms,
+                "chunk_start_absolute_ms": chunk_start_absolute_ms,
+                "chunk_end_relative_ms": chunk_end_relative_ms,
+                "chunk_end_absolute_ms": chunk_end_absolute_ms
+            })
+            
+            cumulative_word_index += chunk_word_count
+        
+        return enhanced_mapping
     
     def _calculate_ayah_timestamps(
         self, 
