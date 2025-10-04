@@ -262,16 +262,17 @@ class AudioProcessor:
     def merge_short_chunks(
         self, 
         chunks: List[Dict], 
-        min_chunk_duration: float = 1.0,
-        max_chunk_duration: float = 120.0
+        min_chunk_duration: float = 3.0,
+        max_chunk_duration: float = 3.0
     ) -> List[Dict]:
         """
-        Merge short chunks together to avoid too many small segments.
+        Merge ONLY very short chunks (< 3 seconds) together.
+        Chunks >= 3 seconds are never merged to preserve natural verse boundaries.
         
         Args:
             chunks: List of audio chunks
-            min_chunk_duration: Minimum duration for a chunk in seconds
-            max_chunk_duration: Maximum duration for a merged chunk in seconds (default 120s for long ayahs)
+            min_chunk_duration: Minimum duration threshold (default 3.0s)
+            max_chunk_duration: Maximum duration for merged chunks (default 3.0s)
             
         Returns:
             List of merged chunks
@@ -290,12 +291,14 @@ class AudioProcessor:
             else:
                 current_duration = len(current_merge["audio"]) / self.TARGET_SAMPLE_RATE
                 
-                # Merge if current chunk is too short or combined duration is acceptable
-                if (chunk_duration < min_chunk_duration or current_duration < min_chunk_duration) and \
+                # Only merge if BOTH chunks are < 3 seconds AND combined is <= 3 seconds
+                if chunk_duration < min_chunk_duration and \
+                   current_duration < min_chunk_duration and \
                    (current_duration + chunk_duration) <= max_chunk_duration:
                     # Merge chunks
                     current_merge["audio"] = np.concatenate([current_merge["audio"], chunk["audio"]])
                     current_merge["end_time"] = chunk["end_time"]
+                    logger.debug(f"Merged chunk: {current_duration:.2f}s + {chunk_duration:.2f}s = {(current_duration + chunk_duration):.2f}s")
                 else:
                     # Save current merge and start new one
                     merged_chunks.append(current_merge)
@@ -309,6 +312,7 @@ class AudioProcessor:
         for idx, chunk in enumerate(merged_chunks):
             chunk["chunk_index"] = idx
         
+        logger.info(f"Merged {len(chunks)} chunks into {len(merged_chunks)} chunks (only < 3s merged)")
         return merged_chunks
 
 

@@ -75,12 +75,9 @@ class TranscriptionService:
                 keep_silence=200       # Keep 200ms of silence at edges
             )
             
-            # Merge very short chunks
-            chunks = audio_processor.merge_short_chunks(
-                chunks,
-                min_chunk_duration=1.0,   # Minimum 1 second per chunk
-                max_chunk_duration=120.0  # Maximum 120 seconds (2 minutes) per chunk - allows long ayahs
-            )
+            # Merge ONLY very short chunks (< 3 seconds)
+            # Longer chunks are preserved to maintain natural verse boundaries
+            chunks = audio_processor.merge_short_chunks(chunks)
             
             logger.info(f"Processing {len(chunks)} audio chunks...")
             
