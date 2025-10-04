@@ -224,19 +224,23 @@ class QuranData:
     
     def normalize_arabic_text(self, text: str) -> str:
         """
-        Normalize Arabic text by removing diacritics and extra spaces.
+        Normalize Arabic text by removing all diacritics, tilawah marks, and extra spaces.
+        Comprehensive removal of tashkeel, harakat, tanween, and Quranic marks.
         """
-        # Remove Arabic diacritics (tashkeel)
+        # Remove all Arabic diacritics and Quranic marks
         arabic_diacritics = re.compile("""
-            ّ    | # Shadda
-            َ    | # Fatha
-            ً    | # Tanween Fath
-            ُ    | # Damma
-            ٌ    | # Tanween Damm
-            ِ    | # Kasra
-            ٍ    | # Tanween Kasr
-            ْ    | # Sukun
-            ـ     # Tatweel/Kashida
+            [\u064B-\u065F]  | # Arabic harakat and tanween (ً ٌ ٍ َ ُ ِ ّ ْ ٓ ٔ ٕ ٖ ٗ ٘ ٙ ٚ ٛ ٜ ٝ ٞ ٟ)
+            [\u0670]        | # Superscript alef (ٰ) - the madd symbol
+            [\u0610-\u061A] | # Additional Arabic marks
+            [\u06D6-\u06DC] | # Small high marks (ۖ ۗ ۘ ۙ ۚ ۛ ۜ)
+            [\u06DF-\u06E8] | # Additional Quranic marks (ۡ ۢ ۣ ۤ ۥ ۦ ۧ ۨ)
+            [\u06EA-\u06ED] | # More Quranic marks (۪ ۫ ۬ ۭ)
+            [\u08D4-\u08E1] | # Extended Arabic marks
+            [\u08E3-\u08FF] | # More extended marks
+            [\u0640]        | # Tatweel/Kashida (ـ)
+            [\u06DD]        | # End of ayah (۝)
+            [\u06DE]        | # Start of rub el hizb (۞)
+            [\u06E9]        | # Place of sajdah (۩)
         """, re.VERBOSE)
         
         text = re.sub(arabic_diacritics, '', text)
