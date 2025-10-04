@@ -126,7 +126,7 @@ GET /health
 ```
 Returns the health status of the API and model information.
 
-#### 3. Transcribe Audio
+#### 3. Transcribe Audio (Sync)
 ```
 POST /transcribe
 ```
@@ -210,6 +210,29 @@ POST /transcribe
 - For Surah 1 (Al-Fatiha), Basmala has `ayah_number: 1`
 - For other surahs, Basmala has `ayah_number: 0` (not officially numbered)
 - Multiple consecutive ayahs are automatically detected and returned
+
+#### 4. Async Transcription
+```
+POST /transcribe/async
+GET /jobs/{job_id}/status
+GET /jobs/{job_id}/download
+GET /jobs/{job_id}/metadata
+GET /jobs
+```
+
+For long-running transcriptions, use the async API. See [ASYNC_API.md](docs/ASYNC_API.md) for details.
+
+#### 5. Job Management
+```
+POST /jobs/resume
+DELETE /jobs/finished
+```
+
+**Resume Job Queue**: Restart any jobs that are still in processing status (useful after server restart).
+
+**Clear Finished Jobs**: Delete all completed/failed jobs from database and remove their files.
+
+See [JOB_MANAGEMENT.md](docs/JOB_MANAGEMENT.md) for details.
 
 ### Example Usage
 
@@ -299,6 +322,8 @@ fetch('http://localhost:8000/transcribe', {
 ## 📖 Documentation
 
 - **[ALGORITHM.md](docs/ALGORITHM.md)** - Complete technical documentation with diagrams
+- **[ASYNC_API.md](docs/ASYNC_API.md)** - Async API documentation for background job processing
+- **[JOB_MANAGEMENT.md](docs/JOB_MANAGEMENT.md)** - Job management APIs (resume queue, clear jobs)
 - **[PROJECT_STATUS.md](docs/PROJECT_STATUS.md)** - Project status, metrics, and roadmap
 - **[Diagrams](docs/.diagrams/)** - PlantUML source files and rendered images
 

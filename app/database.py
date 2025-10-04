@@ -249,6 +249,74 @@ class Database:
         conn.close()
         
         logger.info(f"Deleted job {job_id}")
+    
+    def get_processing_jobs(self) -> List[Dict]:
+        """
+        Get all jobs that are currently in processing status.
+        
+        Returns:
+            List of job dictionaries
+        """
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            SELECT * FROM jobs 
+            WHERE status = ?
+            ORDER BY started_at ASC
+        """, (JobStatus.PROCESSING,))
+        
+        rows = cursor.fetchall()
+        conn.close()
+        
+        return [dict(row) for row in rows]
+    
+    def get_finished_jobs(self) -> List[Dict]:
+        """
+        Get all jobs that are completed or failed.
+        
+        Returns:
+            List of job dictionaries
+        """
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            SELECT * FROM jobs 
+            WHERE status IN (?, ?)
+            ORDER BY completed_at DESC
+        """, (JobStatus.COMPLETED, JobStatus.FAILED))
+        
+        rows = cursor.fetchall()
+        conn.close()
+        
+        return [dict(row) for row in rows]
+    
+    def reset_processing_jobs_to_queued(self) -> int:
+        """
+        Reset all processing jobs back to queued status.
+        This is useful when restarting the server to resume interrupted jobs.
+        
+        Returns:
+            Number of jobs reset
+        """
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            UPDATE jobs 
+            SET status = ?, started_at = NULL
+            WHERE status = ?
+        """, (JobStatus.QUEUED, JobStatus.PROCESSING))
+        
+        count = cursor.rowcount
+        conn.commit()
+        conn.close()
+        
+        logger.info(f"Reset {count} processing jobs to queued")
+        return count
 
 
 # Singleton instance

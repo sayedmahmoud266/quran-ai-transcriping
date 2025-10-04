@@ -293,6 +293,111 @@ async def list_jobs(limit: int = 100):
     }
 
 
+@app.post("/jobs/resume")
+async def resume_job_queue():
+    """
+    Resume the job queue by restarting any jobs that are still in processing status.
+    
+    This is useful when the server was restarted while jobs were being processed.
+    Those jobs will be reset to queued status and will be picked up by the worker again.
+    
+    Returns:
+        JSON with number of jobs reset and triggered processing status
+    """
+    try:
+        # Reset any processing jobs back to queued
+        reset_count = database.reset_processing_jobs_to_queued()
+        
+        # Trigger the background worker to start processing
+        background_worker.trigger_processing()
+        
+        logger.info(f"Resume queue: reset {reset_count} jobs, triggered processing")
+        
+        return {
+            "success": True,
+            "message": f"Job queue resumed. {reset_count} processing job(s) reset to queued.",
+            "jobs_reset": reset_count,
+            "worker_running": background_worker.is_running,
+            "worker_processing": background_worker.is_processing
+        }
+    
+    except Exception as e:
+        logger.error(f"Error resuming job queue: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/jobs/finished")
+async def clear_finished_jobs():
+    """
+    Clear all finished jobs (completed or failed) from the database and remove their files.
+    
+    This will:
+    1. Delete all completed and failed jobs from the database
+    2. Remove their uploaded audio files from data/uploads/
+    3. Remove their result zip files from data/results/
+    
+    Returns:
+        JSON with number of jobs deleted and files removed
+    """
+    try:
+        import os
+        
+        # Get all finished jobs
+        finished_jobs = database.get_finished_jobs()
+        
+        if not finished_jobs:
+            return {
+                "success": True,
+                "message": "No finished jobs to clear",
+                "jobs_deleted": 0,
+                "files_removed": 0
+            }
+        
+        files_removed = 0
+        
+        # Delete files and database entries for each job
+        for job in finished_jobs:
+            job_id = job['id']
+            
+            # Remove uploaded audio file
+            audio_file_path = job.get('audio_file_path')
+            if audio_file_path and os.path.exists(audio_file_path):
+                try:
+                    os.remove(audio_file_path)
+                    files_removed += 1
+                    logger.info(f"Removed audio file: {audio_file_path}")
+                except Exception as e:
+                    logger.warning(f"Failed to remove audio file {audio_file_path}: {e}")
+            
+            # Remove result zip file
+            result_zip_path = job.get('result_zip_path')
+            if result_zip_path and os.path.exists(result_zip_path):
+                try:
+                    os.remove(result_zip_path)
+                    files_removed += 1
+                    logger.info(f"Removed result file: {result_zip_path}")
+                except Exception as e:
+                    logger.warning(f"Failed to remove result file {result_zip_path}: {e}")
+            
+            # Delete job from database
+            database.delete_job(job_id)
+        
+        jobs_deleted = len(finished_jobs)
+        
+        logger.info(f"Cleared {jobs_deleted} finished jobs and removed {files_removed} files")
+        
+        return {
+            "success": True,
+            "message": f"Cleared {jobs_deleted} finished job(s) and removed {files_removed} file(s)",
+            "jobs_deleted": jobs_deleted,
+            "files_removed": files_removed
+        }
+    
+    except Exception as e:
+        logger.error(f"Error clearing finished jobs: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/transcribe")
 async def transcribe_audio(
     audio_file: UploadFile = File(..., description="Audio file containing Quran recitation"),

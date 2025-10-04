@@ -198,6 +198,72 @@ curl "http://localhost:8000/jobs?limit=50"
 }
 ```
 
+### 6. Resume Job Queue
+
+**Endpoint**: `POST /jobs/resume`
+
+Resume the job queue by restarting any jobs that are still in processing status. This is useful when the server was restarted while jobs were being processed. Those jobs will be reset to queued status and will be picked up by the worker again.
+
+**Request**:
+```bash
+curl -X POST "http://localhost:8000/jobs/resume"
+```
+
+**Response**:
+```json
+{
+  "success": true,
+  "message": "Job queue resumed. 2 processing job(s) reset to queued.",
+  "jobs_reset": 2,
+  "worker_running": true,
+  "worker_processing": false
+}
+```
+
+**Use Cases**:
+- Server was restarted while jobs were processing
+- Worker thread crashed and needs to be restarted
+- Manual intervention to retry stuck jobs
+
+### 7. Clear Finished Jobs
+
+**Endpoint**: `DELETE /jobs/finished`
+
+Clear all finished jobs (completed or failed) from the database and remove their files. This will:
+1. Delete all completed and failed jobs from the database
+2. Remove their uploaded audio files from `data/uploads/`
+3. Remove their result zip files from `data/results/`
+
+**Request**:
+```bash
+curl -X DELETE "http://localhost:8000/jobs/finished"
+```
+
+**Response**:
+```json
+{
+  "success": true,
+  "message": "Cleared 15 finished job(s) and removed 30 file(s)",
+  "jobs_deleted": 15,
+  "files_removed": 30
+}
+```
+
+**Response (No Jobs)**:
+```json
+{
+  "success": true,
+  "message": "No finished jobs to clear",
+  "jobs_deleted": 0,
+  "files_removed": 0
+}
+```
+
+**Use Cases**:
+- Clean up disk space by removing old completed jobs
+- Remove failed jobs after investigating errors
+- Periodic maintenance to keep database clean
+
 ## Usage Examples
 
 ### Python Example
@@ -245,6 +311,14 @@ metadata_response = requests.get(
 )
 metadata = metadata_response.json()
 print(f"Surah {metadata['surah_number']}: {metadata['total_ayahs']} ayahs")
+
+# 5. Resume job queue (if server was restarted)
+resume_response = requests.post('http://localhost:8000/jobs/resume')
+print(f"Jobs reset: {resume_response.json()['jobs_reset']}")
+
+# 6. Clear all finished jobs
+clear_response = requests.delete('http://localhost:8000/jobs/finished')
+print(f"Jobs deleted: {clear_response.json()['jobs_deleted']}")
 ```
 
 ### JavaScript Example
@@ -292,6 +366,20 @@ const metadataResponse = await fetch(
 );
 const metadata = await metadataResponse.json();
 console.log(`Surah ${metadata.surah_number}: ${metadata.total_ayahs} ayahs`);
+
+// 5. Resume job queue (if server was restarted)
+const resumeResponse = await fetch('http://localhost:8000/jobs/resume', {
+  method: 'POST'
+});
+const resumeData = await resumeResponse.json();
+console.log(`Jobs reset: ${resumeData.jobs_reset}`);
+
+// 6. Clear all finished jobs
+const clearResponse = await fetch('http://localhost:8000/jobs/finished', {
+  method: 'DELETE'
+});
+const clearData = await clearResponse.json();
+console.log(`Jobs deleted: ${clearData.jobs_deleted}`);
 ```
 
 ## Job Status Flow
