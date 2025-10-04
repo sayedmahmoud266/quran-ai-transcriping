@@ -138,7 +138,7 @@ chunk = {
 ---
 
 ### Phase 4: Verse Matching with Chunk Tracking
-**Status**: ⏳ Pending
+**Status**: ✅ COMPLETED (Commit: TBD)
 
 **Objective**: Link detected ayahs to their source chunks (many-to-many relationship)
 
@@ -165,15 +165,22 @@ chunk_ayah_mapping = {
 ```
 
 **Implementation Steps**:
-- [ ] Modify `match_verses()` to accept chunk information
-- [ ] Create `_map_ayahs_to_chunks()` method
-- [ ] Track which chunks contain which ayahs
-- [ ] Track which ayahs span which chunks
-- [ ] Store mapping for timestamp calculation
+- ✅ Modify `match_verses()` to accept chunk information
+- ✅ Create `_map_ayahs_to_chunks()` method
+- ✅ Track which chunks contain which ayahs
+- ✅ Track which ayahs span which chunks
+- ✅ Store mapping for timestamp calculation
 
-**Files to Modify**:
-- `app/quran_data.py` - Update `match_verses()` method
-- `app/transcription_service.py` - Pass chunk data to verse matching
+**Changes Made**:
+- ✅ Created `_map_ayahs_to_chunks()` method with intelligent matching
+- ✅ Builds `ayah_chunk_mapping` - maps each ayah to its chunks
+- ✅ Builds `chunk_ayah_mapping` - maps each chunk to its ayahs
+- ✅ Uses normalized text matching with 50% threshold for partial matches
+- ✅ Stores mapping in verse details as `chunk_mapping` field
+- ✅ Added comprehensive logging showing which ayahs are in which chunks
+
+**Files Modified**:
+- `app/transcription_service.py`
 
 ---
 
@@ -323,7 +330,7 @@ If issues arise:
 ✅ **Phase 1**: Chunks >= 3 seconds are never merged
 ✅ **Phase 2**: Each chunk has transcribed_text field
 ✅ **Phase 3**: No duplicate words between consecutive chunks
-⏳ **Phase 4**: Accurate ayah-to-chunk mapping
+✅ **Phase 4**: Accurate ayah-to-chunk mapping
 ⏳ **Phase 5**: Timestamp accuracy improved by > 50%
 ⏳ **Phase 6**: Silence splitting only at chunk boundaries
 
@@ -331,6 +338,6 @@ If issues arise:
 
 ---
 
-**Last Updated**: 2025-10-04 16:25
-**Current Phase**: Phase 4 - Verse Matching with Chunk Tracking
-**Next Action**: Create ayah-to-chunk mapping structure
+**Last Updated**: 2025-10-04 16:32
+**Current Phase**: Phase 5 - Advanced Timestamp Detection
+**Next Action**: Implement timestamp calculation for 4 scenarios

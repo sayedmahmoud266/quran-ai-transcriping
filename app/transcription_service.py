@@ -121,6 +121,17 @@ class TranscriptionService:
                          for r in chunk_results]
             details = self._create_verse_details(combined_transcription, combined_timestamps, chunk_info)
             
+            # Create ayah-to-chunk mapping (many-to-many relationship)
+            # This will be used in Phase 5 for accurate timestamp calculation
+            matched_verses = quran_data.match_verses(combined_transcription, chunk_info)
+            ayah_chunk_mapping, chunk_ayah_mapping = self._map_ayahs_to_chunks(matched_verses, chunk_results)
+            
+            # Store mappings in details for later use
+            for detail in details:
+                ayah_key = f"{detail['surah_number']}:{detail['ayah_number']}"
+                if ayah_key in ayah_chunk_mapping:
+                    detail['chunk_mapping'] = ayah_chunk_mapping[ayah_key]
+            
             # Validate and correct verse boundaries (feedback loop)
             logger.info("Running validation and correction feedback loop...")
             details = self._validate_and_correct_verses(details, combined_transcription, combined_timestamps)
@@ -363,6 +374,90 @@ class TranscriptionService:
         logger.info(f"Original text corpus preserved for all {len(updated_results)} chunks")
         
         return updated_results
+    
+    def _map_ayahs_to_chunks(self, matched_verses: List[Dict], chunk_results: List[Dict]) -> tuple:
+        """
+        Create many-to-many mapping between ayahs and chunks.
+        
+        This determines which chunks contain which ayahs and vice versa by:
+        1. Finding each ayah's text in the chunk transcriptions
+        2. Tracking which chunks contain parts of each ayah
+        
+        Args:
+            matched_verses: List of matched ayah dictionaries from verse matching
+            chunk_results: List of chunk transcription results
+            
+        Returns:
+            Tuple of (ayah_chunk_mapping, chunk_ayah_mapping)
+            - ayah_chunk_mapping: {ayah_key: {"chunks": [indices], "text": str, ...}}
+            - chunk_ayah_mapping: {chunk_index: [ayah_keys]}
+        """
+        from app.quran_data import quran_data
+        
+        ayah_chunk_mapping = {}
+        chunk_ayah_mapping = {i: [] for i in range(len(chunk_results))}
+        
+        logger.info("=== Mapping Ayahs to Chunks ===")
+        
+        for verse in matched_verses:
+            surah = verse['surah']
+            ayah = verse['ayah']
+            ayah_key = f"{surah}:{ayah}"
+            
+            # Get normalized ayah text for matching
+            ayah_text = verse.get('text', '')
+            ayah_normalized = quran_data.normalize_arabic_text(ayah_text)
+            ayah_words = ayah_normalized.split()
+            
+            if not ayah_words:
+                continue
+            
+            # Find which chunks contain this ayah
+            chunks_containing_ayah = []
+            
+            for chunk_idx, chunk in enumerate(chunk_results):
+                # Use original_text for accurate word position tracking
+                chunk_normalized = quran_data.normalize_arabic_text(chunk['original_text'])
+                
+                # Check if ayah text appears in this chunk
+                if ayah_normalized in chunk_normalized:
+                    chunks_containing_ayah.append(chunk_idx)
+                else:
+                    # Check for partial match (at least 50% of ayah words)
+                    chunk_words = chunk_normalized.split()
+                    matching_words = sum(1 for word in ayah_words if word in chunk_words)
+                    
+                    if matching_words >= len(ayah_words) * 0.5:
+                        chunks_containing_ayah.append(chunk_idx)
+            
+            # Store mapping
+            if chunks_containing_ayah:
+                ayah_chunk_mapping[ayah_key] = {
+                    "surah": surah,
+                    "ayah": ayah,
+                    "chunks": chunks_containing_ayah,
+                    "text": ayah_text,
+                    "word_count": len(ayah_words)
+                }
+                
+                # Update reverse mapping
+                for chunk_idx in chunks_containing_ayah:
+                    if ayah_key not in chunk_ayah_mapping[chunk_idx]:
+                        chunk_ayah_mapping[chunk_idx].append(ayah_key)
+                
+                logger.info(f"Ayah {ayah_key}: Found in chunks {chunks_containing_ayah}")
+            else:
+                logger.warning(f"Ayah {ayah_key}: Not found in any chunk!")
+        
+        # Log summary
+        logger.info(f"=== Mapping Summary ===")
+        logger.info(f"Total ayahs mapped: {len(ayah_chunk_mapping)}")
+        logger.info(f"Chunk-to-Ayah mapping:")
+        for chunk_idx, ayah_keys in chunk_ayah_mapping.items():
+            if ayah_keys:
+                logger.info(f"  Chunk {chunk_idx}: {len(ayah_keys)} ayahs - {', '.join(ayah_keys)}")
+        
+        return ayah_chunk_mapping, chunk_ayah_mapping
     
     def _combine_timestamps(self, chunk_results: List[Dict]) -> List[Dict]:
         """
