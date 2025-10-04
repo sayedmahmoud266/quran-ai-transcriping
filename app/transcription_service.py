@@ -93,17 +93,25 @@ class TranscriptionService:
                 if chunk_result:
                     chunk_results.append(chunk_result)
             
-            # Log chunk summary
-            logger.info(f"=== Chunk Summary ===")
+            # Log chunk summary (before duplicate removal)
+            logger.info(f"=== Chunk Summary (Before Duplicate Removal) ===")
             logger.info(f"Total chunks: {len(chunk_results)}")
-            total_words = sum(r.get("word_count", 0) for r in chunk_results)
-            logger.info(f"Total words across all chunks: {total_words}")
+            total_words_before = sum(r.get("word_count", 0) for r in chunk_results)
+            logger.info(f"Total words across all chunks: {total_words_before}")
             for r in chunk_results:
                 logger.info(f"  Chunk {r['chunk_index']}: {r['word_count']} words, "
                            f"{r['chunk_duration']:.2f}s, text: {r['transcribed_text'][:50]}...")
             
-            # Combine all chunk results
-            combined_transcription = " ".join([r["transcription"] for r in chunk_results])
+            # Remove duplicate words between consecutive chunks
+            chunk_results = self._remove_duplicate_words(chunk_results)
+            
+            # Log summary after duplicate removal
+            logger.info(f"=== After Duplicate Removal ===")
+            total_words_after = sum(r.get("word_count", 0) for r in chunk_results)
+            logger.info(f"Total words: {total_words_after} (removed {total_words_before - total_words_after} duplicates)")
+            
+            # Combine all chunk results (using updated transcribed_text)
+            combined_transcription = " ".join([r["transcribed_text"] for r in chunk_results if r["transcribed_text"]])
             combined_timestamps = self._combine_timestamps(chunk_results)
             
             logger.info(f"Combined transcription: {combined_transcription}")
@@ -252,6 +260,103 @@ class TranscriptionService:
         except Exception as e:
             logger.error(f"Error transcribing chunk {chunk_index}: {e}")
             return None
+    
+    def _find_word_overlap(self, text1: str, text2: str) -> int:
+        """
+        Find the longest overlap between the end of text1 and the start of text2.
+        
+        Args:
+            text1: First text (earlier chunk)
+            text2: Second text (later chunk)
+            
+        Returns:
+            Number of overlapping words
+        """
+        words1 = text1.split()
+        words2 = text2.split()
+        
+        if not words1 or not words2:
+            return 0
+        
+        max_overlap = 0
+        
+        # Try different overlap lengths, starting from the longest possible
+        max_possible_overlap = min(len(words1), len(words2))
+        
+        for overlap_len in range(max_possible_overlap, 0, -1):
+            # Get last N words from text1
+            end_words = words1[-overlap_len:]
+            # Get first N words from text2
+            start_words = words2[:overlap_len]
+            
+            # Check if they match
+            if end_words == start_words:
+                max_overlap = overlap_len
+                break
+        
+        return max_overlap
+    
+    def _remove_duplicate_words(self, chunk_results: List[Dict]) -> List[Dict]:
+        """
+        Remove duplicate words at boundaries between consecutive chunks.
+        Updates transcribed_text, word_count, and timestamps for affected chunks.
+        
+        Args:
+            chunk_results: List of chunk transcription results
+            
+        Returns:
+            Updated list of chunk results with duplicates removed
+        """
+        if len(chunk_results) <= 1:
+            return chunk_results
+        
+        logger.info("=== Removing Duplicate Words Between Chunks ===")
+        
+        updated_results = []
+        
+        for i in range(len(chunk_results)):
+            current_chunk = chunk_results[i].copy()
+            
+            if i > 0:
+                # Check for overlap with previous chunk
+                prev_chunk = updated_results[-1]
+                overlap = self._find_word_overlap(
+                    prev_chunk["transcribed_text"],
+                    current_chunk["transcribed_text"]
+                )
+                
+                if overlap > 0:
+                    # Remove overlapping words from the start of current chunk
+                    words = current_chunk["transcribed_text"].split()
+                    remaining_words = words[overlap:]
+                    
+                    logger.info(f"Chunk {i}: Found {overlap} duplicate words with previous chunk")
+                    logger.info(f"  Removed: {' '.join(words[:overlap])}")
+                    logger.info(f"  Kept: {' '.join(remaining_words) if remaining_words else '[empty]'}")
+                    
+                    # Update transcribed_text
+                    current_chunk["transcribed_text"] = ' '.join(remaining_words)
+                    current_chunk["word_count"] = len(remaining_words)
+                    
+                    # Update timestamps - remove first N timestamps
+                    if "timestamps" in current_chunk and len(current_chunk["timestamps"]) > overlap:
+                        current_chunk["timestamps"] = current_chunk["timestamps"][overlap:]
+                    else:
+                        current_chunk["timestamps"] = []
+                    
+                    # Keep transcription field for backward compatibility
+                    current_chunk["transcription"] = current_chunk["transcribed_text"]
+            
+            updated_results.append(current_chunk)
+        
+        # Log summary
+        total_duplicates = sum(
+            chunk_results[i]["word_count"] - updated_results[i]["word_count"]
+            for i in range(len(chunk_results))
+        )
+        logger.info(f"Total duplicate words removed: {total_duplicates}")
+        
+        return updated_results
     
     def _combine_timestamps(self, chunk_results: List[Dict]) -> List[Dict]:
         """
