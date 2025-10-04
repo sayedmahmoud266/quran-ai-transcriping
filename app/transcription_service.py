@@ -507,6 +507,7 @@ class TranscriptionService:
     ) -> List[Dict]:
         """
         Build enhanced chunk mapping array with detailed information.
+        Only includes chunks where ayah text appears in natural Quranic order.
         
         Args:
             ayah_key: Ayah identifier (e.g., "55:1")
@@ -533,19 +534,41 @@ class TranscriptionService:
         enhanced_mapping = []
         cumulative_word_index = 0
         
+        # Filter chunks to only include those within ayah time boundaries
+        # This ensures we only map chunks where the ayah actually appears in natural order
+        valid_chunks = []
         for chunk_idx in chunk_indices:
+            chunk = chunk_results[chunk_idx]
+            chunk_start = chunk['chunk_start_time']
+            chunk_end = chunk['chunk_end_time']
+            
+            # Check if chunk overlaps with ayah time range
+            # Chunk must start before ayah ends AND end after ayah starts
+            if chunk_start < ayah_end_time and chunk_end > ayah_start_time:
+                valid_chunks.append(chunk_idx)
+        
+        for chunk_idx in valid_chunks:
             chunk = chunk_results[chunk_idx]
             chunk_text = chunk['original_text']
             chunk_normalized = quran_data.normalize_arabic_text(chunk_text)
             chunk_words = chunk_normalized.split()
             
-            # Find which ayah words are in this chunk
-            chunk_ayah_words = [w for w in ayah_words if w in chunk_words]
+            # Find which ayah words are in this chunk IN ORDER
+            # This ensures we only count words that appear in the natural Quranic sequence
+            chunk_ayah_words = []
+            for word in ayah_words:
+                if word in chunk_words:
+                    chunk_ayah_words.append(word)
+            
             chunk_word_count = len(chunk_ayah_words)
+            
+            # Skip chunks with no matching words
+            if chunk_word_count == 0:
+                continue
             
             # Calculate word indices
             chunk_start_word_index = cumulative_word_index
-            chunk_end_word_index = cumulative_word_index + chunk_word_count - 1 if chunk_word_count > 0 else cumulative_word_index
+            chunk_end_word_index = cumulative_word_index + chunk_word_count - 1
             
             # Calculate absolute timestamps (relative to full audio)
             chunk_start_absolute_ms = int(chunk['chunk_start_time'] * 1000)

@@ -434,23 +434,31 @@ class AudioSplitter:
                     if relative_actual_end < -1000:
                         logger.warning(f"Ayah {detail['ayah_number']} cut off: {-relative_actual_end}ms removed")
                     
-                    # Build metadata
+                    # Build metadata matching API format
                     metadata_entry = {
                         "surah_number": surah,
                         "ayah_number": ayah_number_for_metadata,
-                        "ayah_text": ayah_text,
+                        "ayah_text_tashkeel": ayah_text,
                         "ayah_text_normalized": ayah_text_normalized,
-                        "filename": filename,
+                        "ayah_word_count": detail.get('ayah_word_count', len(ayah_text_normalized.split())),
+                        "start_from_word": detail.get('start_from_word', 1),
+                        "end_to_word": detail.get('end_to_word', len(ayah_text_normalized.split())),
+                        "audio_start_timestamp": detail.get('audio_start_timestamp', '00:00:00.000'),
+                        "audio_end_timestamp": detail.get('audio_end_timestamp', '00:00:00.000'),
+                        "audio_start_offset_absolute_ms": original_start,
+                        "audio_end_offset_absolute_ms": original_end,
+                        "match_confidence": detail.get('match_confidence', 1.0),
                         "is_basmala": is_basmala,
+                        "filename": filename,
                         "duration_seconds": round(len(segment) / 1000, 2),
-                        "audio_start_offset_absolute_ms": start_time,
-                        "audio_end_offset_absolute_ms": end_time,
-                        "actual_ayah_start_offset_absolute_ms": original_start,
-                        "actual_ayah_end_offset_absolute_ms": original_end,
+                        "chunk_mapping": detail.get('chunk_mapping', []),
+                        # Legacy fields for backward compatibility
+                        "audio_start_offset_absolute_ms_legacy": start_time,
+                        "audio_end_offset_absolute_ms_legacy": end_time,
                         "actual_ayah_start_offset_relative_ms": relative_actual_start,
                         "actual_ayah_end_offset_relative_ms": relative_actual_end,
                         "silence_gaps": silence_gaps if silence_gaps else [],
-                        "cutoff_uncertain": uncertain  # Flag for uncertain cutoff points
+                        "cutoff_uncertain": uncertain
                     }
                     
                     ayah_metadata.append(metadata_entry)
@@ -463,9 +471,16 @@ class AudioSplitter:
                     continue
             
             # Add metadata JSON
+            # Combine all ayah texts for transcription field
+            combined_transcription = " ".join([
+                detail.get('ayah_text_tashkeel', '') 
+                for detail in ayah_details
+            ])
+            
             metadata_json = {
                 "surah_number": surah_num,
                 "total_ayahs": len(ayah_details),
+                "transcription": combined_transcription,
                 "audio_format": file_ext.replace('.', ''),
                 "ayahs": ayah_metadata
             }
