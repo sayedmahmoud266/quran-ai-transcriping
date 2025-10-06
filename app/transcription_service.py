@@ -227,7 +227,7 @@ class TranscriptionService:
             
             # Debug: Save matched verses with detailed chunk information
             if _debug_recorder:
-                from app.quran_data import quran_data
+                from rapidfuzz import fuzz
                 
                 # Build detailed verse info with chunk details
                 detailed_verses = []
@@ -248,7 +248,6 @@ class TranscriptionService:
                                 verse_normalized = quran_data.normalize_arabic_text(verse['text'])
                                 chunk_normalized = quran_data.normalize_arabic_text(chunk['original_text'])
                                 
-                                from rapidfuzz import fuzz
                                 similarity = fuzz.ratio(verse_normalized, chunk_normalized)
                                 
                                 verse_detail['chunks_used'].append({
