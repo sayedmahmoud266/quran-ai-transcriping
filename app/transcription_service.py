@@ -172,16 +172,47 @@ class TranscriptionService:
             
             logger.info(f"Combined transcription: {combined_transcription}")
             
-            # Debug: Save combined timestamps
+            # Debug: Save combined timestamps with audio segments
             if _debug_recorder:
+                # Create audio segments for each word
+                audio_files = []
+                for i, ts in enumerate(combined_timestamps[:50]):  # First 50 words with audio
+                    word = ts.get('word', '')
+                    start = ts.get('start', 0)
+                    end = ts.get('end', 0)
+                    
+                    # Find which chunk this word belongs to
+                    for chunk in chunk_results:
+                        if chunk['chunk_start_time'] <= start <= chunk['chunk_end_time']:
+                            # Extract word audio from chunk
+                            chunk_audio = chunk_results[chunk['chunk_index']]['audio'] if 'audio' in chunk else chunks[chunk['chunk_index']]['audio']
+                            
+                            # Calculate position within chunk
+                            word_start_in_chunk = start - chunk['chunk_start_time']
+                            word_end_in_chunk = end - chunk['chunk_start_time']
+                            
+                            # Convert to samples
+                            start_sample = int(word_start_in_chunk * sample_rate)
+                            end_sample = int(word_end_in_chunk * sample_rate)
+                            
+                            if start_sample < len(chunk_audio) and end_sample <= len(chunk_audio):
+                                word_audio = chunk_audio[start_sample:end_sample]
+                                audio_files.append({
+                                    "name": f"word_{i:04d}_{word}",
+                                    "audio": word_audio
+                                })
+                            break
+                
                 _debug_recorder.save_step(
                     "06_timestamps_combined",
                     data={
                         "combined_transcription": combined_transcription,
                         "total_words": len(combined_transcription.split()),
                         "total_timestamps": len(combined_timestamps),
-                        "timestamps": combined_timestamps[:100]  # First 100 for brevity
-                    }
+                        "timestamps": combined_timestamps  # ALL timestamps now
+                    },
+                    audio_files=audio_files,
+                    sample_rate=sample_rate
                 )
             
             # Match verses using chunk boundaries as hints
@@ -194,13 +225,50 @@ class TranscriptionService:
             matched_verses = quran_data.match_verses(combined_transcription, chunk_info)
             ayah_chunk_mapping, chunk_ayah_mapping = self._map_ayahs_to_chunks(matched_verses, chunk_results)
             
-            # Debug: Save matched verses
+            # Debug: Save matched verses with detailed chunk information
             if _debug_recorder:
+                from app.quran_data import quran_data
+                
+                # Build detailed verse info with chunk details
+                detailed_verses = []
+                for verse in matched_verses:
+                    ayah_key = f"{verse['surah']}:{verse['ayah']}"
+                    verse_detail = verse.copy()
+                    
+                    # Add chunk details if available
+                    if ayah_key in ayah_chunk_mapping:
+                        chunk_indices = ayah_chunk_mapping[ayah_key]['chunks']
+                        verse_detail['chunks_used'] = []
+                        
+                        for chunk_idx in chunk_indices:
+                            if chunk_idx < len(chunk_results):
+                                chunk = chunk_results[chunk_idx]
+                                
+                                # Calculate similarity between verse and chunk
+                                verse_normalized = quran_data.normalize_arabic_text(verse['text'])
+                                chunk_normalized = quran_data.normalize_arabic_text(chunk['original_text'])
+                                
+                                from rapidfuzz import fuzz
+                                similarity = fuzz.ratio(verse_normalized, chunk_normalized)
+                                
+                                verse_detail['chunks_used'].append({
+                                    "chunk_index": chunk_idx,
+                                    "chunk_original_text": chunk['original_text'],
+                                    "chunk_transcribed_text": chunk['transcribed_text'],
+                                    "chunk_start_time": chunk['chunk_start_time'],
+                                    "chunk_end_time": chunk['chunk_end_time'],
+                                    "chunk_duration": chunk['chunk_duration'],
+                                    "similarity_score": similarity,
+                                    "similarity_percentage": f"{similarity:.1f}%"
+                                })
+                    
+                    detailed_verses.append(verse_detail)
+                
                 _debug_recorder.save_step(
                     "07_verses_matched",
                     data={
                         "total_verses": len(matched_verses),
-                        "matched_verses": matched_verses,
+                        "matched_verses": detailed_verses,
                         "ayah_chunk_mapping": {k: {"chunks": v["chunks"], "text": v["text"][:50]} for k, v in ayah_chunk_mapping.items()},
                         "chunk_ayah_mapping": chunk_ayah_mapping
                     }
