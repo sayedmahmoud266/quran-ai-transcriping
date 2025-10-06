@@ -110,6 +110,35 @@ class TranscriptionService:
                 logger.info(f"  Chunk {r['chunk_index']}: {r['word_count']} words, "
                            f"{r['chunk_duration']:.2f}s, text: {r['transcribed_text'][:50]}...")
             
+            # Debug: Save transcribed chunks
+            if _debug_recorder:
+                audio_files = []
+                for r in chunk_results:
+                    audio_files.append({
+                        "name": f"chunk_{r['chunk_index']:03d}_transcribed",
+                        "audio": chunks[r['chunk_index']]['audio']
+                    })
+                
+                _debug_recorder.save_step(
+                    "04_chunks_transcribed",
+                    data={
+                        "total_chunks": len(chunk_results),
+                        "total_words": total_words_before,
+                        "chunks": [{
+                            "chunk_index": r['chunk_index'],
+                            "transcribed_text": r['transcribed_text'],
+                            "original_text": r['original_text'],
+                            "word_count": r['word_count'],
+                            "original_word_count": r['original_word_count'],
+                            "chunk_start_time": r['chunk_start_time'],
+                            "chunk_end_time": r['chunk_end_time'],
+                            "chunk_duration": r['chunk_duration']
+                        } for r in chunk_results]
+                    },
+                    audio_files=audio_files,
+                    sample_rate=sample_rate
+                )
+            
             # Remove duplicate words between consecutive chunks
             chunk_results = self._remove_duplicate_words(chunk_results)
             
@@ -118,11 +147,42 @@ class TranscriptionService:
             total_words_after = sum(r.get("word_count", 0) for r in chunk_results)
             logger.info(f"Total words: {total_words_after} (removed {total_words_before - total_words_after} duplicates)")
             
+            # Debug: Save after duplicate removal
+            if _debug_recorder:
+                _debug_recorder.save_step(
+                    "05_duplicates_removed",
+                    data={
+                        "total_chunks": len(chunk_results),
+                        "words_before": total_words_before,
+                        "words_after": total_words_after,
+                        "duplicates_removed": total_words_before - total_words_after,
+                        "chunks": [{
+                            "chunk_index": r['chunk_index'],
+                            "transcribed_text": r['transcribed_text'],
+                            "original_text": r['original_text'],
+                            "word_count": r['word_count'],
+                            "original_word_count": r['original_word_count']
+                        } for r in chunk_results]
+                    }
+                )
+            
             # Combine all chunk results (using updated transcribed_text)
             combined_transcription = " ".join([r["transcribed_text"] for r in chunk_results if r["transcribed_text"]])
             combined_timestamps = self._combine_timestamps(chunk_results)
             
             logger.info(f"Combined transcription: {combined_transcription}")
+            
+            # Debug: Save combined timestamps
+            if _debug_recorder:
+                _debug_recorder.save_step(
+                    "06_timestamps_combined",
+                    data={
+                        "combined_transcription": combined_transcription,
+                        "total_words": len(combined_transcription.split()),
+                        "total_timestamps": len(combined_timestamps),
+                        "timestamps": combined_timestamps[:100]  # First 100 for brevity
+                    }
+                )
             
             # Match verses using chunk boundaries as hints
             chunk_info = [{"start_time": r["chunk_start_time"], "end_time": r.get("chunk_end_time", 0)} 
@@ -133,6 +193,18 @@ class TranscriptionService:
             # This will be used for accurate timestamp calculation
             matched_verses = quran_data.match_verses(combined_transcription, chunk_info)
             ayah_chunk_mapping, chunk_ayah_mapping = self._map_ayahs_to_chunks(matched_verses, chunk_results)
+            
+            # Debug: Save matched verses
+            if _debug_recorder:
+                _debug_recorder.save_step(
+                    "07_verses_matched",
+                    data={
+                        "total_verses": len(matched_verses),
+                        "matched_verses": matched_verses,
+                        "ayah_chunk_mapping": {k: {"chunks": v["chunks"], "text": v["text"][:50]} for k, v in ayah_chunk_mapping.items()},
+                        "chunk_ayah_mapping": chunk_ayah_mapping
+                    }
+                )
             
             # Calculate accurate timestamps using chunk mappings (Phase 5)
             logger.info("=== Calculating Accurate Timestamps ===")
@@ -174,8 +246,55 @@ class TranscriptionService:
                         end_time
                     )
             
+            # Debug: Save after timestamp calculation
+            if _debug_recorder:
+                _debug_recorder.save_step(
+                    "08_timestamps_calculated",
+                    data={
+                        "total_ayahs": len(details),
+                        "ayahs": [{
+                            "surah_number": d['surah_number'],
+                            "ayah_number": d['ayah_number'],
+                            "ayah_text": d.get('ayah_text_tashkeel', '')[:50],
+                            "audio_start_timestamp": d['audio_start_timestamp'],
+                            "audio_end_timestamp": d['audio_end_timestamp'],
+                            "chunk_mapping_count": len(d.get('chunk_mapping', []))
+                        } for d in details]
+                    }
+                )
+            
+            # Debug: Save before silence splitting
+            if _debug_recorder:
+                _debug_recorder.save_step(
+                    "09_before_silence_splitting",
+                    data={
+                        "total_ayahs": len(details),
+                        "ayahs": [{
+                            "surah_number": d['surah_number'],
+                            "ayah_number": d['ayah_number'],
+                            "audio_start_timestamp": d['audio_start_timestamp'],
+                            "audio_end_timestamp": d['audio_end_timestamp']
+                        } for d in details]
+                    }
+                )
+            
             # Apply chunk-boundary-aware silence splitting (Phase 6)
             details = self._apply_silence_splitting(details, chunk_results)
+            
+            # Debug: Save after silence splitting
+            if _debug_recorder:
+                _debug_recorder.save_step(
+                    "10_after_silence_splitting",
+                    data={
+                        "total_ayahs": len(details),
+                        "ayahs": [{
+                            "surah_number": d['surah_number'],
+                            "ayah_number": d['ayah_number'],
+                            "audio_start_timestamp": d['audio_start_timestamp'],
+                            "audio_end_timestamp": d['audio_end_timestamp']
+                        } for d in details]
+                    }
+                )
             
             # Validate and correct verse boundaries (feedback loop)
             logger.info("Running validation and correction feedback loop...")

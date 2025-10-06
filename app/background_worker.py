@@ -7,12 +7,15 @@ import time
 import logging
 from pathlib import Path
 import json
-from typing import Optional
 
 from app.database import database, JobStatus
 from app.audio_processor import audio_processor
 from app.transcription_service import transcription_service
 from app.audio_splitter import audio_splitter
+from app.debug_utils import DebugRecorder, is_debug_enabled
+import app.audio_processor as audio_processor_module
+import app.transcription_service as transcription_service_module
+import app.audio_splitter as audio_splitter_module
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +27,7 @@ class BackgroundWorker:
         """Initialize the background worker."""
         self.is_running = False
         self.is_processing = False
-        self.worker_thread: Optional[threading.Thread] = None
+        self.worker_thread = None
         self.lock = threading.Lock()
     
     def start(self):
@@ -90,6 +93,17 @@ class BackgroundWorker:
         
         logger.info(f"Processing job {job_id}: {job['original_filename']}")
         
+        # Initialize debug recorder if enabled
+        debug_enabled = is_debug_enabled()
+        debug_recorder = DebugRecorder(job_id, enabled=debug_enabled) if debug_enabled else None
+        
+        if debug_recorder:
+            logger.info(f"[{job_id}] Debug mode enabled - data will be saved to .debug/{job_id}")
+            # Set debug recorder in all modules
+            audio_processor_module.set_debug_recorder(debug_recorder)
+            transcription_service_module.set_debug_recorder(debug_recorder)
+            audio_splitter_module.set_debug_recorder(debug_recorder)
+        
         # Update status to processing
         database.update_job_status(job_id, JobStatus.PROCESSING)
         
@@ -152,6 +166,10 @@ class BackgroundWorker:
             )
             
             logger.info(f"[{job_id}] Job completed successfully")
+            
+            # Log debug summary
+            if debug_recorder:
+                logger.info(debug_recorder.get_summary())
         
         except Exception as e:
             logger.error(f"[{job_id}] Job failed: {e}", exc_info=True)
@@ -160,6 +178,17 @@ class BackgroundWorker:
                 JobStatus.FAILED,
                 error_message=str(e)
             )
+            
+            # Log debug summary even on failure
+            if debug_recorder:
+                logger.info(debug_recorder.get_summary())
+        
+        finally:
+            # Clear debug recorders
+            if debug_recorder:
+                audio_processor_module.set_debug_recorder(None)
+                transcription_service_module.set_debug_recorder(None)
+                audio_splitter_module.set_debug_recorder(None)
 
 
 # Singleton instance
