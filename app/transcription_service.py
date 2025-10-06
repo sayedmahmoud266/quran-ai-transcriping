@@ -79,6 +79,10 @@ class TranscriptionService:
             # Longer chunks are preserved to maintain natural verse boundaries
             chunks = audio_processor.merge_short_chunks(chunks)
             
+            # Merge chunks with short silences between them (< 500ms)
+            # This handles cases where silence detection creates chunks with very short gaps
+            chunks = audio_processor.merge_chunks_with_short_silences(chunks, min_silence_duration=0.5)
+            
             logger.info(f"Processing {len(chunks)} audio chunks...")
             
             # Process each chunk

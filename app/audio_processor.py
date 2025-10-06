@@ -314,6 +314,68 @@ class AudioProcessor:
         
         logger.info(f"Merged {len(chunks)} chunks into {len(merged_chunks)} chunks (only < 3s merged)")
         return merged_chunks
+    
+    def merge_chunks_with_short_silences(
+        self,
+        chunks: List[Dict],
+        min_silence_duration: float = 0.5
+    ) -> List[Dict]:
+        """
+        Merge chunks that have less than min_silence_duration seconds of silence between them.
+        
+        This is a post-processing step to handle cases where silence detection
+        creates chunks with very short gaps (< 500ms) that should be merged.
+        
+        Args:
+            chunks: List of audio chunks with metadata
+            min_silence_duration: Minimum silence duration in seconds (default: 0.5s = 500ms)
+            
+        Returns:
+            List of merged chunks
+        """
+        if len(chunks) <= 1:
+            return chunks
+        
+        logger.info(f"Merging chunks with silence < {min_silence_duration}s...")
+        
+        merged_chunks = []
+        current_merge = None
+        
+        for i, chunk in enumerate(chunks):
+            if current_merge is None:
+                # Start a new merge group
+                current_merge = chunk.copy()
+            else:
+                # Calculate silence gap between current merge and this chunk
+                silence_gap = chunk['start_time'] - current_merge['end_time']
+                
+                if silence_gap < min_silence_duration:
+                    # Silence is too short - merge this chunk with current merge
+                    logger.info(f"Merging chunk {i} with previous (silence: {silence_gap:.3f}s < {min_silence_duration}s)")
+                    
+                    # Concatenate audio
+                    current_merge['audio'] = np.concatenate([
+                        current_merge['audio'],
+                        chunk['audio']
+                    ])
+                    
+                    # Update end time
+                    current_merge['end_time'] = chunk['end_time']
+                else:
+                    # Silence is long enough - save current merge and start new one
+                    merged_chunks.append(current_merge)
+                    current_merge = chunk.copy()
+        
+        # Add the last chunk
+        if current_merge is not None:
+            merged_chunks.append(current_merge)
+        
+        # Re-index chunks
+        for idx, chunk in enumerate(merged_chunks):
+            chunk["chunk_index"] = idx
+        
+        logger.info(f"Merged {len(chunks)} chunks into {len(merged_chunks)} chunks (silences < {min_silence_duration}s merged)")
+        return merged_chunks
 
 
 # Singleton instance
