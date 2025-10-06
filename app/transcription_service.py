@@ -14,6 +14,14 @@ from app.quran_data import quran_data
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Global debug recorder (set by background worker)
+_debug_recorder = None
+
+def set_debug_recorder(recorder):
+    """Set the global debug recorder."""
+    global _debug_recorder
+    _debug_recorder = recorder
+
 
 class TranscriptionService:
     """
