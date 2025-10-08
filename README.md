@@ -399,6 +399,30 @@ For complete technical details, see [docs/ALGORITHM.md](docs/ALGORITHM.md).
 
 ![Algorithm Flow](docs/.diagrams/images/complete-flow.png)
 
+## ⚠️ Important: Recent Refactoring (2025-10-08)
+
+**Major architectural changes have been made to improve accuracy and simplicity:**
+
+### What Changed
+- **Removed Word Timestamps**: Eliminated inaccurate linear interpolation of word timestamps
+- **Silence-Based Boundaries**: Now relies solely on naturally detected silence boundaries from audio chunks (step 03_chunks_merged)
+- **Uthmani Text**: Uses full Uthmani tashkeel from `res/quran-uthmani_all.txt`
+- **Direct Chunk Mapping**: Simplified chunk mapping to use direct timestamp overlap instead of fuzzy text matching
+
+### Why This Matters for Future Development
+1. **No Word-Level Timestamps**: The API no longer returns `word_timestamps` in the response
+2. **Chunk Boundaries are Truth**: All timing relies on pydub's silence detection (step 03_chunks_merged)
+3. **Simplified Architecture**: ~200 lines of complex logic removed for better maintainability
+4. **Uthmani Text Source**: Always use `quran_data.get_verse_with_tashkeel()` for ayah text
+
+### Future Word Timestamp Implementation
+When adding accurate word timestamps back:
+- Use Whisper's built-in `return_timestamps='word'` parameter
+- Or integrate forced alignment tools (wav2vec2, Montreal Forced Aligner)
+- **Do NOT** use linear interpolation (time_per_word = duration / word_count)
+
+See [REFACTORING_SUMMARY.md](REFACTORING_SUMMARY.md) for complete details.
+
 ## 🚀 Future Enhancements
 
 - [ ] Multi-surah detection (continuous recitations)

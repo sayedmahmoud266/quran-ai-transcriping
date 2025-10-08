@@ -351,15 +351,28 @@ class AudioProcessor:
                 current_merge = chunk.copy()
             else:
                 current_duration = len(current_merge["audio"]) / self.TARGET_SAMPLE_RATE
+                gap_duration = chunk["start_time"] - current_merge["end_time"]
                 
-                # Only merge if BOTH chunks are < 3 seconds AND combined is <= 3 seconds
+                # Merge if:
+                # 1. BOTH chunks are < 3 seconds AND combined is <= 3 seconds, OR
+                # 2. Gap between chunks is < 500ms (0.5s)
+                should_merge = False
+                merge_reason = ""
+                
                 if chunk_duration < min_chunk_duration and \
                    current_duration < min_chunk_duration and \
                    (current_duration + chunk_duration) <= max_chunk_duration:
+                    should_merge = True
+                    merge_reason = "short chunks"
+                elif gap_duration < 0.5:
+                    should_merge = True
+                    merge_reason = f"small gap ({gap_duration*1000:.0f}ms)"
+                
+                if should_merge:
                     # Merge chunks
                     current_merge["audio"] = np.concatenate([current_merge["audio"], chunk["audio"]])
                     current_merge["end_time"] = chunk["end_time"]
-                    logger.debug(f"Merged chunk: {current_duration:.2f}s + {chunk_duration:.2f}s = {(current_duration + chunk_duration):.2f}s")
+                    logger.debug(f"Merged chunk ({merge_reason}): {current_duration:.2f}s + {chunk_duration:.2f}s = {(current_duration + chunk_duration):.2f}s")
                 else:
                     # Save current merge and start new one
                     merged_chunks.append(current_merge)

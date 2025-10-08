@@ -499,14 +499,10 @@ async def transcribe_audio(
                 ayah_details = result['data']['details']
                 
                 try:
-                    # Get word timestamps from result if available
-                    word_timestamps = result.get('data', {}).get('word_timestamps', None)
-                    
                     # Split audio and create zip
                     zip_buffer, zip_filename = audio_splitter.split_audio_by_ayahs(
                         temp_file_path,
-                        ayah_details,
-                        word_timestamps
+                        ayah_details
                     )
                     
                     logger.info(f"Audio split successfully: {len(ayah_details)} ayahs")

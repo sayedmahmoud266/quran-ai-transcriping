@@ -56,9 +56,6 @@ class AudioSplitter:
     def _detect_silence_gaps_in_segment(
         self,
         segment: AudioSegment,
-        ayah_text_normalized: str,
-        ayah_start_time_ms: int,
-        word_timestamps: List[Dict] = None,
         threshold_ms: int = 500
     ) -> List[Dict]:
         """
@@ -66,9 +63,6 @@ class AudioSplitter:
         
         Args:
             segment: Audio segment for the ayah
-            ayah_text_normalized: Normalized ayah text
-            ayah_start_time_ms: Start time of ayah in absolute milliseconds
-            word_timestamps: Word-level timestamps from transcription
             threshold_ms: Minimum silence duration to detect (milliseconds)
             
         Returns:
@@ -90,9 +84,6 @@ class AudioSplitter:
             if not silences:
                 return []
             
-            # Calculate word count
-            ayah_words = ayah_text_normalized.split()
-            word_count = len(ayah_words)
             segment_duration_ms = len(segment)
             
             # Define margins to exclude leading/trailing silences
@@ -113,81 +104,10 @@ class AudioSplitter:
                 
                 silence_duration = silence_end - silence_start
                 
-                # Calculate absolute silence time
-                absolute_silence_start = ayah_start_time_ms + silence_start
-                
-                logger.info(f"=== Silence Detection Debug ===")
-                logger.info(f"Ayah start time (absolute): {ayah_start_time_ms}ms")
-                logger.info(f"Silence start (relative): {silence_start}ms")
-                logger.info(f"Silence start (absolute): {absolute_silence_start}ms")
-                logger.info(f"Ayah text: {ayah_text_normalized}")
-                logger.info(f"Ayah words: {ayah_words}")
-                logger.info(f"Ayah word count: {word_count}")
-                
-                # Find word position using actual timestamps if available
-                word_position = None
-                if word_timestamps:
-                    logger.info(f"Total word timestamps available: {len(word_timestamps)}")
-                    
-                    # Filter timestamps to only those within this ayah's time range
-                    ayah_end_time_ms = ayah_start_time_ms + segment_duration_ms
-                    ayah_word_timestamps = []
-                    
-                    for wt in word_timestamps:
-                        word_start_ms = int(wt['start'] * 1000)
-                        word_end_ms = int(wt['end'] * 1000)
-                        
-                        # Check if this word is within the ayah's time range
-                        if word_start_ms >= ayah_start_time_ms and word_end_ms <= ayah_end_time_ms:
-                            ayah_word_timestamps.append(wt)
-                    
-                    logger.info(f"Words within this ayah's time range: {len(ayah_word_timestamps)}")
-                    logger.info(f"First 5 ayah words with timestamps:")
-                    for i, wt in enumerate(ayah_word_timestamps[:5]):
-                        logger.info(f"  Ayah word {i+1}: '{wt.get('word', 'N/A')}' @ {wt['start']:.3f}s - {wt['end']:.3f}s ({int(wt['end']*1000)}ms)")
-                    
-                    # Find which word within THIS AYAH the silence comes after
-                    for word_idx, word_ts in enumerate(ayah_word_timestamps):
-                        word_end_ms = int(word_ts['end'] * 1000)
-                        word_text = word_ts.get('word', 'N/A')
-                        
-                        # If silence starts after this word ends
-                        if word_end_ms <= absolute_silence_start:
-                            word_position = word_idx + 1  # Position after this word (1-indexed within ayah)
-                            logger.debug(f"  Ayah word {word_idx+1} ('{word_text}') ends at {word_end_ms}ms <= {absolute_silence_start}ms")
-                        else:
-                            logger.info(f"  Silence comes after ayah word {word_position}: before '{word_text}' @ {word_end_ms}ms")
-                            break
-                else:
-                    logger.warning("No word timestamps available, using time-based estimation")
-                
-                # Fallback to time-based estimation if timestamps not available
-                if word_position is None:
-                    position_ratio = silence_start / segment_duration_ms
-                    word_position = int(position_ratio * word_count)
-                    if word_position <= 0:
-                        word_position = 1
-                    if word_position >= word_count:
-                        word_position = word_count - 1
-                
-                # Ensure position is within bounds
-                if word_position <= 0:
-                    word_position = 1
-                if word_position >= word_count:
-                    word_position = word_count - 1
-                
-                # Log final result
-                if word_position and word_position <= len(ayah_words):
-                    logger.info(f"✓ Final result: Silence after word {word_position}: '{ayah_words[word_position-1]}'")
-                else:
-                    logger.info(f"✓ Final result: Silence after word {word_position}")
-                logger.info(f"==============================\n")
-                
                 silence_gaps.append({
                     "silence_start_ms": silence_start,
                     "silence_end_ms": silence_end,
-                    "silence_duration_ms": silence_duration,
-                    "silence_position_after_word": word_position
+                    "silence_duration_ms": silence_duration
                 })
             
             if silence_gaps:
@@ -350,7 +270,6 @@ class AudioSplitter:
         audio: AudioSegment,
         ayah_details: List[Dict],
         timestamps_list: List[Tuple],
-        word_timestamps: List[Dict],
         file_ext: str,
         surah_num: int
     ) -> Tuple[io.BytesIO, List[Dict]]:
@@ -361,7 +280,6 @@ class AudioSplitter:
             audio: Loaded audio segment
             ayah_details: List of ayah details
             timestamps_list: List of (start_ms, end_ms, uncertain_flag) tuples
-            word_timestamps: Word-level timestamps
             file_ext: File extension
             surah_num: Surah number
             
@@ -429,9 +347,6 @@ class AudioSplitter:
                     # Detect silence gaps
                     silence_gaps = self._detect_silence_gaps_in_segment(
                         segment,
-                        ayah_text_normalized,
-                        start_time,
-                        word_timestamps,
                         threshold_ms=500
                     )
                     
@@ -535,8 +450,7 @@ https://github.com/sayedmahmoud266/quran-ai-transcriping
     def split_audio_by_ayahs(
         self,
         audio_file_path: str,
-        ayah_details: List[Dict],
-        word_timestamps: List[Dict] = None
+        ayah_details: List[Dict]
     ) -> Tuple[io.BytesIO, str]:
         """
         Split audio file into individual ayah segments and create a zip file.
@@ -545,7 +459,6 @@ https://github.com/sayedmahmoud266/quran-ai-transcriping
         Args:
             audio_file_path: Path to the original audio file
             ayah_details: List of ayah details with timestamps
-            word_timestamps: Optional word-level timestamps from transcription
             
         Returns:
             Tuple of (BytesIO object containing zip file, suggested filename)
@@ -602,7 +515,7 @@ https://github.com/sayedmahmoud266/quran-ai-transcriping
             
             # Create zip file
             zip_buffer, _ = self._create_zip_with_timestamps(
-                audio, ayah_details, adjusted_timestamps, word_timestamps,
+                audio, ayah_details, adjusted_timestamps,
                 file_ext, surah_num
             )
             

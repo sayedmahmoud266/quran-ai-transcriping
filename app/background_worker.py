@@ -122,7 +122,6 @@ class BackgroundWorker:
             data = result['data']
             transcription_text = data.get('exact_transcription', '')
             details = data.get('details', [])
-            word_timestamps = data.get('word_timestamps', [])
             
             # Step 3: Split audio into ayahs
             logger.info(f"[{job_id}] Splitting audio into ayahs...")
@@ -132,8 +131,7 @@ class BackgroundWorker:
             
             zip_buffer, zip_filename = audio_splitter.split_audio_by_ayahs(
                 audio_file_path,
-                details,
-                word_timestamps
+                details
             )
             
             # Step 4: Save result zip file

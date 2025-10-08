@@ -172,57 +172,24 @@ class TranscriptionService:
             
             # Combine all chunk results (using updated transcribed_text)
             combined_transcription = " ".join([r["transcribed_text"] for r in chunk_results if r["transcribed_text"]])
-            combined_timestamps = self._combine_timestamps(chunk_results)
             
             logger.info(f"Combined transcription: {combined_transcription}")
             
-            # Debug: Save combined timestamps with audio segments
+            # Debug: Save combined transcription
             if _debug_recorder:
-                # Create audio segments for each word
-                audio_files = []
-                for i, ts in enumerate(combined_timestamps[:50]):  # First 50 words with audio
-                    word = ts.get('word', '')
-                    start = ts.get('start', 0)
-                    end = ts.get('end', 0)
-                    
-                    # Find which chunk this word belongs to
-                    for chunk in chunk_results:
-                        if chunk['chunk_start_time'] <= start <= chunk['chunk_end_time']:
-                            # Extract word audio from chunk
-                            chunk_audio = chunk_results[chunk['chunk_index']]['audio'] if 'audio' in chunk else chunks[chunk['chunk_index']]['audio']
-                            
-                            # Calculate position within chunk
-                            word_start_in_chunk = start - chunk['chunk_start_time']
-                            word_end_in_chunk = end - chunk['chunk_start_time']
-                            
-                            # Convert to samples
-                            start_sample = int(word_start_in_chunk * sample_rate)
-                            end_sample = int(word_end_in_chunk * sample_rate)
-                            
-                            if start_sample < len(chunk_audio) and end_sample <= len(chunk_audio):
-                                word_audio = chunk_audio[start_sample:end_sample]
-                                audio_files.append({
-                                    "name": f"word_{i:04d}_{word}",
-                                    "audio": word_audio
-                                })
-                            break
-                
                 _debug_recorder.save_step(
-                    "06_timestamps_combined",
+                    "06_transcription_combined",
                     data={
                         "combined_transcription": combined_transcription,
                         "total_words": len(combined_transcription.split()),
-                        "total_timestamps": len(combined_timestamps),
-                        "timestamps": combined_timestamps  # ALL timestamps now
-                    },
-                    audio_files=audio_files,
-                    sample_rate=sample_rate
+                        "total_chunks": len(chunk_results)
+                    }
                 )
             
             # Match verses using chunk boundaries as hints
             chunk_info = [{"start_time": r["chunk_start_time"], "end_time": r.get("chunk_end_time", 0)} 
                          for r in chunk_results]
-            details = self._create_verse_details(combined_transcription, combined_timestamps, chunk_info)
+            details = self._create_verse_details(combined_transcription, chunk_info)
             
             # Create ayah-to-chunk mapping (many-to-many relationship)
             # This will be used for accurate timestamp calculation
@@ -367,9 +334,7 @@ class TranscriptionService:
                     }
                 )
             
-            # Validate and correct verse boundaries (feedback loop)
-            logger.info("Running validation and correction feedback loop...")
-            details = self._validate_and_correct_verses(details, combined_transcription, combined_timestamps)
+            # Note: Validation removed - relying on chunk boundaries for accuracy
             
             # Calculate diagnostic timestamps
             audio_input_end_timestamp = chunk_results[-1].get("chunk_end_time", 0) if chunk_results else 0
@@ -411,7 +376,6 @@ class TranscriptionService:
                 "data": {
                     "exact_transcription": combined_transcription,
                     "details": details,
-                    "word_timestamps": combined_timestamps,  # Add word timestamps for audio splitting
                     "diagnostics": {
                         "audio_input_end_timestamp": seconds_to_timestamp(audio_input_end_timestamp),
                         "last_ayah_end_timestamp": last_ayah_end_timestamp,
@@ -478,19 +442,9 @@ class TranscriptionService:
             logger.info(f"Chunk {chunk_index} ({chunk_start_time:.2f}s - {chunk_start_time + len(chunk_audio)/sample_rate:.2f}s): "
                        f"{len(words)} words - {transcription[:100]}{'...' if len(transcription) > 100 else ''}")
             
-            # Create timestamps for this chunk
+            # Calculate chunk duration
             chunk_duration = len(chunk_audio) / sample_rate
             words = transcription.split()
-            
-            timestamps = []
-            if words:
-                time_per_word = chunk_duration / len(words)
-                for i, word in enumerate(words):
-                    timestamps.append({
-                        "word": word,
-                        "start": chunk_start_time + (i * time_per_word),
-                        "end": chunk_start_time + ((i + 1) * time_per_word)
-                    })
             
             return {
                 "transcription": transcription,
@@ -498,7 +452,6 @@ class TranscriptionService:
                 "transcribed_text": transcription,  # Deduplicated text - used for verse matching
                 "original_word_count": len(words),  # Original word count (never changes)
                 "word_count": len(words),           # Current word count (updated after deduplication)
-                "timestamps": timestamps,
                 "chunk_index": chunk_index,
                 "chunk_start_time": chunk_start_time,
                 "chunk_end_time": chunk_start_time + chunk_duration,
@@ -593,7 +546,6 @@ class TranscriptionService:
                     current_chunk["word_count"] = len(remaining_words)
                     
                     # NOTE: original_text and original_word_count remain unchanged
-                    # NOTE: timestamps remain unchanged (based on original_text)
                     
                     # Keep transcription field for backward compatibility
                     current_chunk["transcription"] = current_chunk["transcribed_text"]
@@ -704,8 +656,8 @@ class TranscriptionService:
         ayah_end_time: float
     ) -> List[Dict]:
         """
-        Build enhanced chunk mapping array with detailed information.
-        Only includes chunks where ayah text appears in natural Quranic order.
+        Build enhanced chunk mapping array using direct timestamp matching.
+        Links the original chunks that were used to form the ayah based on timestamp overlap.
         
         Args:
             ayah_key: Ayah identifier (e.g., "55:1")
@@ -718,23 +670,15 @@ class TranscriptionService:
         Returns:
             List of detailed chunk mapping dictionaries
         """
-        from app.quran_data import quran_data
-        
         if ayah_key not in ayah_chunk_mapping:
             return []
         
         ayah_info = ayah_chunk_mapping[ayah_key]
         chunk_indices = ayah_info['chunks']
         
-        ayah_normalized = quran_data.normalize_arabic_text(ayah_text)
-        ayah_words = ayah_normalized.split()
-        
         enhanced_mapping = []
-        cumulative_word_index = 0
         
-        # Filter chunks to only include those within ayah time boundaries
-        # This ensures we only map chunks where the ayah actually appears in natural order
-        valid_chunks = []
+        # Direct timestamp matching: include chunks that overlap with ayah time range
         for chunk_idx in chunk_indices:
             chunk = chunk_results[chunk_idx]
             chunk_start = chunk['chunk_start_time']
@@ -743,58 +687,29 @@ class TranscriptionService:
             # Check if chunk overlaps with ayah time range
             # Chunk must start before ayah ends AND end after ayah starts
             if chunk_start < ayah_end_time and chunk_end > ayah_start_time:
-                valid_chunks.append(chunk_idx)
-        
-        for chunk_idx in valid_chunks:
-            chunk = chunk_results[chunk_idx]
-            chunk_text = chunk['original_text']
-            chunk_normalized = quran_data.normalize_arabic_text(chunk_text)
-            chunk_words = chunk_normalized.split()
-            
-            # Find which ayah words are in this chunk IN ORDER
-            # This ensures we only count words that appear in the natural Quranic sequence
-            chunk_ayah_words = []
-            for word in ayah_words:
-                if word in chunk_words:
-                    chunk_ayah_words.append(word)
-            
-            chunk_word_count = len(chunk_ayah_words)
-            
-            # Skip chunks with no matching words
-            if chunk_word_count == 0:
-                continue
-            
-            # Calculate word indices
-            chunk_start_word_index = cumulative_word_index
-            chunk_end_word_index = cumulative_word_index + chunk_word_count - 1
-            
-            # Calculate absolute timestamps (relative to full audio)
-            chunk_start_absolute_ms = int(chunk['chunk_start_time'] * 1000)
-            chunk_end_absolute_ms = int(chunk['chunk_end_time'] * 1000)
-            
-            # Calculate relative timestamps (relative to ayah audio)
-            chunk_start_relative_ms = int((chunk['chunk_start_time'] - ayah_start_time) * 1000)
-            chunk_end_relative_ms = int((chunk['chunk_end_time'] - ayah_start_time) * 1000)
-            
-            # Clamp relative timestamps to ayah boundaries
-            chunk_start_relative_ms = max(0, chunk_start_relative_ms)
-            ayah_duration_ms = int((ayah_end_time - ayah_start_time) * 1000)
-            chunk_end_relative_ms = min(ayah_duration_ms, chunk_end_relative_ms)
-            
-            enhanced_mapping.append({
-                "chunk_index": chunk_idx,
-                "chunk_text": chunk_text,
-                "chunk_normalized_text": chunk_normalized,
-                "chunk_start_word_index": chunk_start_word_index,
-                "chunk_end_word_index": chunk_end_word_index,
-                "chunk_word_count": chunk_word_count,
-                "chunk_start_relative_ms": chunk_start_relative_ms,
-                "chunk_start_absolute_ms": chunk_start_absolute_ms,
-                "chunk_end_relative_ms": chunk_end_relative_ms,
-                "chunk_end_absolute_ms": chunk_end_absolute_ms
-            })
-            
-            cumulative_word_index += chunk_word_count
+                # Calculate absolute timestamps (relative to full audio)
+                chunk_start_absolute_ms = int(chunk_start * 1000)
+                chunk_end_absolute_ms = int(chunk_end * 1000)
+                
+                # Calculate relative timestamps (relative to ayah audio)
+                chunk_start_relative_ms = int((chunk_start - ayah_start_time) * 1000)
+                chunk_end_relative_ms = int((chunk_end - ayah_start_time) * 1000)
+                
+                # Clamp relative timestamps to ayah boundaries
+                chunk_start_relative_ms = max(0, chunk_start_relative_ms)
+                ayah_duration_ms = int((ayah_end_time - ayah_start_time) * 1000)
+                chunk_end_relative_ms = min(ayah_duration_ms, chunk_end_relative_ms)
+                
+                enhanced_mapping.append({
+                    "chunk_index": chunk_idx,
+                    "chunk_start_time": chunk_start,
+                    "chunk_end_time": chunk_end,
+                    "chunk_duration": chunk['chunk_duration'],
+                    "chunk_start_relative_ms": chunk_start_relative_ms,
+                    "chunk_start_absolute_ms": chunk_start_absolute_ms,
+                    "chunk_end_relative_ms": chunk_end_relative_ms,
+                    "chunk_end_absolute_ms": chunk_end_absolute_ms
+                })
         
         return enhanced_mapping
     
@@ -1103,211 +1018,29 @@ class TranscriptionService:
         
         return updated_details
     
-    def _combine_timestamps(self, chunk_results: List[Dict]) -> List[Dict]:
-        """
-        Combine timestamps from all chunks into a single list.
-        
-        Args:
-            chunk_results: List of chunk transcription results
-            
-        Returns:
-            Combined list of timestamps
-        """
-        combined_timestamps = []
-        for chunk_result in chunk_results:
-            combined_timestamps.extend(chunk_result["timestamps"])
-        return combined_timestamps
-    
-    def _extract_timestamps(self, transcription: str, 
-                          audio_array: np.ndarray, 
-                          sample_rate: int) -> List[Dict]:
-        """
-        Create approximate word-level timestamps based on audio duration.
-        
-        Args:
-            transcription: Transcribed text
-            audio_array: Original audio array
-            sample_rate: Sample rate
-            
-        Returns:
-            List of timestamp dictionaries
-        """
-        # Create approximate timestamps based on audio length
-        # In production, you could use a forced alignment tool like wav2vec2
-        # or other ASR models that provide word-level timestamps
-        
-        audio_duration = len(audio_array) / sample_rate
-        
-        words = transcription.split()
-        num_words = len(words)
-        
-        if num_words == 0:
-            return []
-        
-        # Create approximate timestamps (evenly distributed)
-        # This is a simplification - in production, use proper alignment
-        timestamps = []
-        time_per_word = audio_duration / num_words
-        
-        for i, word in enumerate(words):
-            start_time = i * time_per_word
-            end_time = (i + 1) * time_per_word
-            timestamps.append({
-                "word": word,
-                "start": start_time,
-                "end": end_time
-            })
-        
-        return timestamps
-    
-    def _validate_and_correct_verses(
-        self,
-        details: List[Dict],
-        transcription: str,
-        timestamps: List[Dict]
-    ) -> List[Dict]:
-        """
-        Validate verse boundaries and correct misalignments.
-        This is a feedback loop that checks if each ayah's audio matches its text.
-        
-        Args:
-            details: Initial verse details
-            transcription: Full transcription text
-            timestamps: Word-level timestamps
-            
-        Returns:
-            Corrected verse details
-        """
-        if not details or len(details) < 2:
-            return details
-        
-        logger.info(f"Validating {len(details)} ayahs...")
-        
-        # Normalize transcription for comparison
-        transcription_normalized = quran_data.normalize_arabic_text(transcription)
-        transcription_words = transcription_normalized.split()
-        
-        corrected_details = []
-        word_index = 0
-        
-        for idx, detail in enumerate(details):
-            # Get expected ayah text
-            expected_text = quran_data.normalize_arabic_text(detail['ayah_text_tashkeel'])
-            expected_words = expected_text.split()
-            expected_word_count = len(expected_words)
-            
-            # Extract actual words from transcription at current position
-            if word_index + expected_word_count <= len(transcription_words):
-                actual_words = transcription_words[word_index:word_index + expected_word_count]
-                actual_text = ' '.join(actual_words)
-                
-                # Calculate similarity
-                from rapidfuzz import fuzz
-                similarity = fuzz.ratio(expected_text, actual_text) / 100.0
-                
-                logger.debug(f"Ayah {detail['ayah_number']}: Expected {expected_word_count} words, similarity: {similarity:.2f}")
-                
-                # If similarity is too low, try to find the correct boundary
-                # But only if it's significantly low (< 60%) to avoid over-correction
-                if similarity < 0.60:
-                    logger.warning(f"Low similarity ({similarity:.2f}) for Ayah {detail['ayah_number']}, attempting correction...")
-                    
-                    # Search for best match in a window
-                    best_match_index = word_index
-                    best_similarity = similarity
-                    search_window = min(20, len(transcription_words) - word_index)
-                    
-                    for offset in range(-5, search_window):
-                        test_start = max(0, word_index + offset)
-                        test_end = min(len(transcription_words), test_start + expected_word_count)
-                        
-                        if test_end - test_start == expected_word_count:
-                            test_words = transcription_words[test_start:test_end]
-                            test_text = ' '.join(test_words)
-                            test_similarity = fuzz.ratio(expected_text, test_text) / 100.0
-                            
-                            if test_similarity > best_similarity:
-                                best_similarity = test_similarity
-                                best_match_index = test_start
-                    
-                    # Only apply correction if improvement is significant (> 10%)
-                    if best_similarity > similarity + 0.10:
-                        logger.info(f"  → Corrected position: word {word_index} → {best_match_index}, similarity: {similarity:.2f} → {best_similarity:.2f}")
-                        word_index = best_match_index
-                        similarity = best_similarity
-                    else:
-                        logger.info(f"  → No significant improvement found, keeping original position")
-                elif similarity >= 0.60:
-                    logger.debug(f"Ayah {detail['ayah_number']}: Good similarity ({similarity:.2f}), no correction needed")
-                
-                # Calculate timestamps based on corrected word positions
-                if word_index < len(timestamps) and word_index + expected_word_count <= len(timestamps):
-                    start_time = timestamps[word_index]["start"]
-                    end_time = timestamps[word_index + expected_word_count - 1]["end"]
-                    
-                    # Update detail with corrected timestamps
-                    corrected_detail = detail.copy()
-                    corrected_detail["audio_start_timestamp"] = quran_data._format_timestamp(start_time)
-                    corrected_detail["audio_end_timestamp"] = quran_data._format_timestamp(end_time)
-                    corrected_detail["match_confidence"] = similarity
-                    corrected_detail["start_from_word"] = 1
-                    corrected_detail["end_to_word"] = expected_word_count
-                    
-                    corrected_details.append(corrected_detail)
-                    
-                    # Move to next ayah
-                    word_index += expected_word_count
-                else:
-                    # Keep original if we can't correct
-                    logger.warning(f"  → Could not correct Ayah {detail['ayah_number']}, keeping original")
-                    corrected_details.append(detail)
-                    word_index += expected_word_count
-            else:
-                # Not enough words left, keep original
-                corrected_details.append(detail)
-                break
-        
-        logger.info(f"Validation complete: {len(corrected_details)} ayahs validated")
-        return corrected_details
     
     def _create_verse_details(self, transcription: str, 
-                            timestamps: List[Dict],
                             chunk_boundaries: List[Dict] = None) -> List[Dict]:
         """
-        Create detailed verse information from transcription and timestamps.
+        Create detailed verse information from transcription.
         Uses Quran database for accurate verse matching.
         
         Args:
             transcription: Full transcription text
-            timestamps: Word-level timestamps
             chunk_boundaries: Audio chunk boundaries as hints for verse detection
             
         Returns:
             List of verse detail dictionaries
         """
-        if not timestamps:
+        if not chunk_boundaries:
             return []
         
         # Use Quran data to match verses
         matched_verses = quran_data.match_verses(transcription, chunk_boundaries)
         
         if not matched_verses:
-            logger.warning("No verses matched, returning transcription as-is")
-            # Fallback: return transcription without verse matching
-            start_time = timestamps[0]["start"] if timestamps else 0.0
-            end_time = timestamps[-1]["end"] if timestamps else 0.0
-            
-            return [{
-                "surah_number": 0,
-                "ayah_number": 0,
-                "ayah_text_tashkeel": transcription,
-                "ayah_word_count": len(transcription.split()),
-                "start_from_word": 1,
-                "end_to_word": len(transcription.split()),
-                "audio_start_timestamp": quran_data._format_timestamp(start_time),
-                "audio_end_timestamp": quran_data._format_timestamp(end_time),
-                "match_confidence": 0.0
-            }]
+            logger.warning("No verses matched")
+            return []
         
         # Create details from matched verses
         details = []
@@ -1316,19 +1049,21 @@ class TranscriptionService:
         for idx, matched in enumerate(matched_verses):
             surah = matched['surah']
             ayah = matched['ayah']
-            verse_text = matched['text']
             is_basmala = matched.get('is_basmala', False)
+            
+            # Get Uthmani text with full tashkeel from quran_uthmani_all.txt
+            verse_text = quran_data.get_verse_with_tashkeel(surah, ayah)
             
             # Get timing info
             start_time = matched.get('audio_start_time', 0.0)
             end_time = matched.get('audio_end_time', 0.0)
             
-            # If no timing from matching, estimate based on position
-            if start_time == 0.0 and end_time == 0.0 and timestamps:
+            # If no timing from matching, use chunk boundaries
+            if start_time == 0.0 and end_time == 0.0 and chunk_boundaries:
                 # Distribute time across verses proportionally
-                total_duration = timestamps[-1]["end"] - timestamps[0]["start"]
+                total_duration = chunk_boundaries[-1]["end_time"] - chunk_boundaries[0]["start_time"]
                 verse_duration = total_duration / len(matched_verses)
-                start_time = timestamps[0]["start"] + (idx * verse_duration)
+                start_time = chunk_boundaries[0]["start_time"] + (idx * verse_duration)
                 end_time = start_time + verse_duration
             
             # Count words in the verse
