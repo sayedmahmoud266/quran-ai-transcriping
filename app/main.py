@@ -2,6 +2,10 @@
 FastAPI application for Quran audio transcription.
 """
 
+# Load environment variables from .env file FIRST
+from dotenv import load_dotenv
+load_dotenv()
+
 import os
 import tempfile
 from pathlib import Path
@@ -568,6 +572,13 @@ async def startup_event():
     logger.info("Starting Quran AI Transcription API...")
     logger.info(f"Model: {transcription_service.MODEL_NAME}")
     logger.info(f"Device: {transcription_service.device}")
+    
+    # Log debug mode status
+    from app.debug_utils import is_debug_enabled
+    if is_debug_enabled():
+        logger.info("🐛 DEBUG MODE ENABLED - Pipeline data will be saved to .debug/ folder")
+    else:
+        logger.info("Debug mode disabled (set DEBUG_MODE=true in .env to enable)")
     
     # Start background worker
     background_worker.start()

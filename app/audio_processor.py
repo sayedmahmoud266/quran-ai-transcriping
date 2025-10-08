@@ -15,6 +15,14 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# Global debug recorder (set by background worker)
+_debug_recorder = None
+
+def set_debug_recorder(recorder):
+    """Set the global debug recorder."""
+    global _debug_recorder
+    _debug_recorder = recorder
+
 
 class AudioProcessor:
     """
@@ -90,6 +98,23 @@ class AudioProcessor:
         
         logger.info(f"Added {silence_duration}s silence buffer at end")
         logger.info(f"Final audio: sr={sample_rate}Hz, duration={len(audio_array)/sample_rate:.2f}s")
+        
+        # Debug: Save resampled audio
+        if _debug_recorder:
+            _debug_recorder.save_step(
+                "01_audio_resampled",
+                data={
+                    "sample_rate": sample_rate,
+                    "duration_seconds": len(audio_array) / sample_rate,
+                    "total_samples": len(audio_array),
+                    "original_sample_rate": original_sr if 'original_sr' in locals() else sample_rate
+                },
+                audio_files=[{
+                    "name": "resampled_audio",
+                    "audio": audio_array
+                }],
+                sample_rate=sample_rate
+            )
         
         return audio_array, sample_rate
     
@@ -257,6 +282,42 @@ class AudioProcessor:
                     })
                     logger.info(f"Added remaining audio chunk at end ({total_duration - last_chunk_end:.2f}s)")
         
+        # Debug: Save detected silence chunks
+        if _debug_recorder:
+            audio_files = []
+            chunks_data = []
+            for i, chunk in enumerate(chunks):
+                audio_files.append({
+                    "name": f"chunk_{chunk['chunk_index']:03d}",
+                    "audio": chunk['audio']
+                })
+                
+                # Calculate silence duration from previous chunk
+                silence_before = 0.0
+                if i > 0:
+                    prev_chunk = chunks[i - 1]
+                    silence_before = chunk['start_time'] - prev_chunk['end_time']
+                
+                chunks_data.append({
+                    "chunk_index": chunk['chunk_index'],
+                    "start_time": chunk['start_time'],
+                    "end_time": chunk['end_time'],
+                    "duration": chunk['end_time'] - chunk['start_time'],
+                    "silence_before": silence_before,
+                    "silence_before_ms": int(silence_before * 1000)
+                })
+            
+            _debug_recorder.save_step(
+                "02_silence_detected",
+                data={
+                    "total_chunks": len(chunks),
+                    "total_silence_duration": sum(c['silence_before'] for c in chunks_data),
+                    "chunks": chunks_data
+                },
+                audio_files=audio_files,
+                sample_rate=sample_rate
+            )
+        
         return chunks
     
     def merge_short_chunks(
@@ -313,6 +374,34 @@ class AudioProcessor:
             chunk["chunk_index"] = idx
         
         logger.info(f"Merged {len(chunks)} chunks into {len(merged_chunks)} chunks (only < 3s merged)")
+        
+        # Debug: Save merged chunks
+        if _debug_recorder:
+            audio_files = []
+            chunks_data = []
+            for chunk in merged_chunks:
+                audio_files.append({
+                    "name": f"merged_chunk_{chunk['chunk_index']:03d}",
+                    "audio": chunk['audio']
+                })
+                chunks_data.append({
+                    "chunk_index": chunk['chunk_index'],
+                    "start_time": chunk['start_time'],
+                    "end_time": chunk['end_time'],
+                    "duration": chunk['end_time'] - chunk['start_time']
+                })
+            
+            _debug_recorder.save_step(
+                "03_chunks_merged",
+                data={
+                    "original_chunks": len(chunks),
+                    "merged_chunks": len(merged_chunks),
+                    "chunks": chunks_data
+                },
+                audio_files=audio_files,
+                sample_rate=self.TARGET_SAMPLE_RATE
+            )
+        
         return merged_chunks
     
     def merge_chunks_with_short_silences(

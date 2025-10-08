@@ -1,17 +1,26 @@
 """
-Audio splitting module for extracting individual ayahs from audio files.
+Audio splitting module for splitting audio by ayahs.
 """
 
-import os
 import io
+import os
 import json
-import zipfile
 import logging
 from pathlib import Path
 from typing import List, Dict, Tuple, Optional
 from pydub import AudioSegment
+from pydub.silence import detect_silence
+import zipfile
 
 logger = logging.getLogger(__name__)
+
+# Global debug recorder (set by background worker)
+_debug_recorder = None
+
+def set_debug_recorder(recorder):
+    """Set the global debug recorder."""
+    global _debug_recorder
+    _debug_recorder = recorder
 
 
 class AudioSplitter:
@@ -571,6 +580,22 @@ https://github.com/sayedmahmoud266/quran-ai-transcriping
             if not surah_num and ayah_details:
                 surah_num = ayah_details[0]['surah_number']
             
+            # Debug: Save before splitting
+            if _debug_recorder:
+                _debug_recorder.save_step(
+                    "11_before_audio_splitting",
+                    data={
+                        "total_ayahs": len(ayah_details),
+                        "audio_duration_seconds": len(audio) / 1000,
+                        "ayahs": [{
+                            "surah_number": d['surah_number'],
+                            "ayah_number": d['ayah_number'],
+                            "audio_start_timestamp": d.get('audio_start_timestamp'),
+                            "audio_end_timestamp": d.get('audio_end_timestamp')
+                        } for d in ayah_details]
+                    }
+                )
+            
             # Calculate adjusted timestamps with intelligent gap detection
             logger.info("Calculating optimal ayah boundaries...")
             adjusted_timestamps = self._calculate_adjusted_timestamps(ayah_details, audio)
@@ -583,6 +608,50 @@ https://github.com/sayedmahmoud266/quran-ai-transcriping
             
             zip_filename = f"surah_{surah_num:03d}_ayahs.zip"
             logger.info(f"Zip file created successfully: {zip_filename}")
+            
+            # Debug: Save after splitting
+            if _debug_recorder:
+                # Extract ayah audio files for debug
+                import numpy as np
+                audio_files = []
+                for idx, detail in enumerate(ayah_details):
+                    if idx < len(adjusted_timestamps):
+                        start_ms, end_ms, _ = adjusted_timestamps[idx]
+                        segment = audio[start_ms:end_ms]
+                        
+                        # Convert to numpy array
+                        samples = np.array(segment.get_array_of_samples())
+                        if segment.channels == 2:
+                            samples = samples.reshape((-1, 2))
+                            samples = samples.mean(axis=1)  # Convert to mono
+                        
+                        # Normalize to float32
+                        samples = samples.astype(np.float32) / 32768.0
+                        
+                        ayah_num = detail.get('ayah_number', idx)
+                        is_basmala = detail.get('is_basmala', False)
+                        name = f"ayah_{ayah_num:03d}_basmala" if is_basmala else f"ayah_{ayah_num:03d}"
+                        
+                        audio_files.append({
+                            "name": name,
+                            "audio": samples
+                        })
+                
+                _debug_recorder.save_step(
+                    "12_after_audio_splitting",
+                    data={
+                        "total_ayahs": len(ayah_details),
+                        "zip_filename": zip_filename,
+                        "ayahs": [{
+                            "surah_number": d['surah_number'],
+                            "ayah_number": d['ayah_number'],
+                            "filename": d.get('filename', 'unknown'),
+                            "duration_seconds": d.get('duration_seconds', 0)
+                        } for d in ayah_details]
+                    },
+                    audio_files=audio_files,
+                    sample_rate=audio.frame_rate
+                )
             
             return zip_buffer, zip_filename
             
