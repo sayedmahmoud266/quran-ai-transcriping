@@ -159,6 +159,168 @@ class PipelineStep(ABC):
         """
         return False
     
+    def _save_debug_data(self, context: PipelineContext):
+        """
+        Save debug data for this step if debug recorder is available.
+        
+        Args:
+            context: The pipeline context
+        """
+        debug_recorder = context.get('debug_recorder')
+        if not debug_recorder:
+            return
+        
+        try:
+            # Collect data to save
+            debug_data = {
+                'step_name': self.name,
+                'status': 'completed',
+                'sample_rate': context.sample_rate,
+                'num_chunks': len(context.chunks),
+                'num_transcriptions': len(context.transcriptions),
+                'num_matched_verses': len(context.matched_verses),
+                'has_audio': context.audio_array is not None,
+                'audio_duration': len(context.audio_array) / context.sample_rate if context.audio_array is not None else 0,
+                'final_transcription_length': len(context.final_transcription),
+                'metadata_keys': list(context.metadata.keys()),
+            }
+            
+            # Add step-specific debug info if available
+            if self.name in context.debug_data:
+                debug_data['step_info'] = context.debug_data[self.name]
+            
+            # Save audio if available
+            audio_files = []
+            if context.audio_array is not None:
+                audio_files.append({
+                    'name': 'audio',
+                    'audio': context.audio_array
+                })
+            
+            # Save the step data
+            debug_recorder.save_step(
+                step_name=self.name,
+                data=debug_data,
+                audio_files=audio_files if audio_files else None,
+                sample_rate=context.sample_rate
+            )
+            
+        except Exception as e:
+            self.logger.warning(f"Failed to save debug data for {self.name}: {e}")
+    
+    def _save_debug_data_on_failure(self, context: PipelineContext, error: Exception):
+        """
+        Save debug data when a step fails.
+        
+        Captures the full context state and error details for debugging.
+        
+        Args:
+            context: The pipeline context
+            error: The exception that was raised
+        """
+        debug_recorder = context.get('debug_recorder')
+        if not debug_recorder:
+            return
+        
+        try:
+            import traceback
+            
+            # Collect comprehensive failure data
+            debug_data = {
+                'step_name': self.name,
+                'status': 'FAILED',
+                'error_type': type(error).__name__,
+                'error_message': str(error),
+                'error_traceback': traceback.format_exc(),
+                
+                # Context state at failure
+                'sample_rate': context.sample_rate,
+                'num_chunks': len(context.chunks),
+                'num_transcriptions': len(context.transcriptions),
+                'num_matched_verses': len(context.matched_verses),
+                'has_audio': context.audio_array is not None,
+                'audio_duration': len(context.audio_array) / context.sample_rate if context.audio_array is not None else 0,
+                'final_transcription_length': len(context.final_transcription),
+                'metadata_keys': list(context.metadata.keys()),
+                
+                # All step results up to this point
+                'previous_steps': context.step_results,
+                
+                # All debug data from previous steps
+                'debug_data': context.debug_data,
+            }
+            
+            # Add chunks info if available
+            if context.chunks:
+                debug_data['chunks_info'] = [
+                    {
+                        'start': chunk.get('start', 0),
+                        'end': chunk.get('end', 0),
+                        'duration': chunk.get('end', 0) - chunk.get('start', 0)
+                    }
+                    for chunk in context.chunks[:10]  # First 10 chunks
+                ]
+            
+            # Add transcriptions info if available
+            if context.transcriptions:
+                debug_data['transcriptions_sample'] = [
+                    {
+                        'text': t.get('text', '')[:100],  # First 100 chars
+                        'has_timestamps': 'timestamps' in t
+                    }
+                    for t in context.transcriptions[:5]  # First 5 transcriptions
+                ]
+            
+            # Save audio if available
+            audio_files = []
+            if context.audio_array is not None:
+                audio_files.append({
+                    'name': 'audio_at_failure',
+                    'audio': context.audio_array
+                })
+            
+            # Save the failure data
+            debug_recorder.save_step(
+                step_name=f"{self.name}_FAILURE",
+                data=debug_data,
+                audio_files=audio_files if audio_files else None,
+                sample_rate=context.sample_rate
+            )
+            
+            # Also save error details as text file
+            error_details = f"""
+Step: {self.name}
+Status: FAILED
+Error Type: {type(error).__name__}
+Error Message: {str(error)}
+
+Full Traceback:
+{traceback.format_exc()}
+
+Context State:
+- Sample Rate: {context.sample_rate}
+- Chunks: {len(context.chunks)}
+- Transcriptions: {len(context.transcriptions)}
+- Matched Verses: {len(context.matched_verses)}
+- Has Audio: {context.audio_array is not None}
+- Audio Duration: {len(context.audio_array) / context.sample_rate if context.audio_array is not None else 0:.2f}s
+- Final Transcription Length: {len(context.final_transcription)}
+
+Previous Steps:
+{chr(10).join(f"  - {name}: {result['status']}" for name, result in context.step_results.items())}
+"""
+            
+            debug_recorder.save_text(
+                step_name=f"{self.name}_FAILURE",
+                filename="error_details.txt",
+                content=error_details
+            )
+            
+            self.logger.info(f"Saved failure debug data for {self.name}")
+            
+        except Exception as save_error:
+            self.logger.error(f"Failed to save failure debug data: {save_error}", exc_info=True)
+    
     def execute(self, context: PipelineContext) -> PipelineContext:
         """
         Execute the step with validation and error handling.
@@ -206,6 +368,9 @@ class PipelineStep(ABC):
                 duration
             )
             
+            # Save debug data if recorder is available
+            self._save_debug_data(context)
+            
             self.logger.info(f"Completed step: {self.name} in {duration:.2f}s")
             
             return context
@@ -220,6 +385,9 @@ class PipelineStep(ABC):
                 duration,
                 {'error': str(e)}
             )
+            
+            # Save debug data for failed step
+            self._save_debug_data_on_failure(context, e)
             
             raise
     

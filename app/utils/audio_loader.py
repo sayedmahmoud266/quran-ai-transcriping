@@ -16,19 +16,18 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-def load_audio_file(file_path: str, target_sample_rate: int = 16000) -> Tuple[np.ndarray, int]:
+def load_audio_file(file_path: str) -> Tuple[np.ndarray, int]:
     """
-    Load audio file and prepare for processing.
+    Load audio file into memory.
     
-    Handles multiple formats and resamples to target sample rate.
-    Adds silence buffer at the end for complete transcription.
+    This function ONLY loads the audio data without any processing.
+    Resampling should be done in the AudioResamplingStep of the pipeline.
     
     Args:
         file_path: Path to the audio file
-        target_sample_rate: Target sample rate (default: 16000 for Whisper)
         
     Returns:
-        Tuple of (audio_array, sample_rate)
+        Tuple of (audio_array, original_sample_rate)
     """
     logger.info(f"Loading audio file: {file_path}")
     
@@ -38,76 +37,58 @@ def load_audio_file(file_path: str, target_sample_rate: int = 16000) -> Tuple[np
     # Load audio
     if file_ext == '.mp3':
         logger.info("MP3 file detected, using pydub for reliable loading...")
-        audio_array, original_sr = _load_with_pydub(file_path, target_sample_rate)
+        audio_array, sample_rate = _load_with_pydub(file_path)
     else:
         try:
-            # Load without resampling to preserve quality
-            audio_array, original_sr = librosa.load(
+            # Load without resampling to preserve original quality
+            audio_array, sample_rate = librosa.load(
                 file_path,
                 sr=None,  # Keep original sample rate
                 mono=True,
                 duration=None  # Load entire file
             )
-            logger.info(f"Loaded audio: {original_sr}Hz, {len(audio_array)} samples")
+            logger.info(f"Loaded audio: {sample_rate}Hz, {len(audio_array)} samples, {len(audio_array)/sample_rate:.2f}s")
         except Exception as e:
             logger.info(f"Librosa failed, trying pydub: {e}")
-            audio_array, original_sr = _load_with_pydub(file_path, target_sample_rate)
+            audio_array, sample_rate = _load_with_pydub(file_path)
     
-    # Resample if needed
-    if original_sr != target_sample_rate:
-        logger.info(f"Resampling from {original_sr}Hz to {target_sample_rate}Hz...")
-        audio_array = librosa.resample(
-            audio_array,
-            orig_sr=original_sr,
-            target_sr=target_sample_rate,
-            res_type='kaiser_best'
-        )
-        sample_rate = target_sample_rate
-    else:
-        sample_rate = original_sr
-    
-    # Add silence buffer at the end
-    silence_duration = 3.0  # seconds
-    silence_samples = int(silence_duration * sample_rate)
-    silence = np.zeros(silence_samples, dtype=audio_array.dtype)
-    audio_array = np.concatenate([audio_array, silence])
-    
-    logger.info(f"Final audio: {sample_rate}Hz, {len(audio_array)/sample_rate:.2f}s")
+    logger.info(f"Audio loaded successfully: {sample_rate}Hz, {len(audio_array)/sample_rate:.2f}s")
     
     return audio_array, sample_rate
 
 
-def _load_with_pydub(file_path: str, target_sample_rate: int) -> Tuple[np.ndarray, int]:
+def _load_with_pydub(file_path: str) -> Tuple[np.ndarray, int]:
     """
     Load audio using pydub (handles formats librosa might not support).
     
+    Converts to mono but preserves original sample rate.
+    
     Args:
         file_path: Path to audio file
-        target_sample_rate: Target sample rate
         
     Returns:
-        Tuple of (audio_array, sample_rate)
+        Tuple of (audio_array, original_sample_rate)
     """
     # Load with pydub
     audio = AudioSegment.from_file(file_path)
+    
+    # Get original sample rate
+    original_sample_rate = audio.frame_rate
     
     # Convert to mono if stereo
     if audio.channels > 1:
         audio = audio.set_channels(1)
     
-    # Resample to target sample rate
-    audio = audio.set_frame_rate(target_sample_rate)
-    
-    # Export to temporary WAV file
+    # Export to temporary WAV file (preserving sample rate)
     temp_dir = tempfile.gettempdir()
     temp_wav = os.path.join(temp_dir, f"temp_{os.getpid()}.wav")
     audio.export(temp_wav, format="wav")
     
     try:
-        # Load the converted file with librosa
+        # Load the converted file with librosa (keep original sample rate)
         audio_array, sample_rate = librosa.load(
             temp_wav,
-            sr=target_sample_rate,
+            sr=None,  # Keep original sample rate
             mono=True
         )
         return audio_array, sample_rate

@@ -27,10 +27,12 @@ class DebugRecorder:
         self.job_id = job_id
         self.enabled = enabled
         self.base_dir = None
+        self.step_counter = 0  # Track step index for folder naming
         
         if self.enabled:
             # Create debug directory structure
-            debug_root = Path(__file__).parent.parent / ".debug"
+            # Path: project_root/.debug/job_id/
+            debug_root = Path(__file__).parent.parent.parent / ".debug"
             self.base_dir = debug_root / job_id
             self.base_dir.mkdir(parents=True, exist_ok=True)
             logger.info(f"Debug mode enabled for job {job_id} at {self.base_dir}")
@@ -55,9 +57,14 @@ class DebugRecorder:
             return
         
         try:
-            # Create step directory
-            step_dir = self.base_dir / step_name
+            # Create step directory with index prefix
+            # Format: {00}_StepName, {01}_StepName, etc.
+            indexed_step_name = f"{self.step_counter:02d}_{step_name}"
+            step_dir = self.base_dir / indexed_step_name
             step_dir.mkdir(parents=True, exist_ok=True)
+            
+            # Increment counter for next step
+            self.step_counter += 1
             
             # Save timestamp
             timestamp_file = step_dir / "timestamp.txt"
@@ -88,19 +95,19 @@ class DebugRecorder:
                         # Save as WAV file
                         audio_path = audio_dir / f"{name}.wav"
                         sf.write(str(audio_path), audio, sample_rate)
-                        logger.debug(f"Saved {step_name} audio: {audio_path}")
+                        logger.debug(f"Saved {indexed_step_name} audio: {audio_path}")
             
-            logger.info(f"Debug: Saved step '{step_name}' to {step_dir}")
+            logger.info(f"Debug: Saved step '{indexed_step_name}' to {step_dir}")
             
         except Exception as e:
-            logger.error(f"Error saving debug step '{step_name}': {e}", exc_info=True)
+            logger.error(f"Error saving debug step '{indexed_step_name}': {e}", exc_info=True)
     
     def save_text(self, step_name: str, filename: str, content: str):
         """
         Save text content to a file.
         
         Args:
-            step_name: Name of the processing step
+            step_name: Name of the processing step (can be indexed like "00_StepName" or just "StepName")
             filename: Name of the file
             content: Text content to save
         """
@@ -108,14 +115,28 @@ class DebugRecorder:
             return
         
         try:
-            step_dir = self.base_dir / step_name
+            # If step_name doesn't have index prefix, find the matching directory
+            if not step_name[0:2].isdigit():
+                # Look for existing directory with this step name
+                matching_dirs = list(self.base_dir.glob(f"*_{step_name}"))
+                if matching_dirs:
+                    step_dir = matching_dirs[0]  # Use the first match
+                else:
+                    # Create new directory with current counter
+                    indexed_step_name = f"{self.step_counter:02d}_{step_name}"
+                    step_dir = self.base_dir / indexed_step_name
+                    self.step_counter += 1
+            else:
+                # Already indexed
+                step_dir = self.base_dir / step_name
+            
             step_dir.mkdir(parents=True, exist_ok=True)
             
             file_path = step_dir / filename
             with open(file_path, 'w', encoding='utf-8') as f:
                 f.write(content)
             
-            logger.debug(f"Saved {step_name}/{filename}")
+            logger.debug(f"Saved {step_dir.name}/{filename}")
             
         except Exception as e:
             logger.error(f"Error saving text file '{step_name}/{filename}': {e}")
