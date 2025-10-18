@@ -71,16 +71,19 @@ clean-all: clean ## Clean everything including virtual environment
 clean-debug: ## Clean debug files
 	@echo "$(GREEN)Cleaning debug files...$(NC)"
 	@rm -rf .debug
+	@mkdir .debug
 	@echo "$(GREEN)Debug files cleaned!$(NC)"
 
 clean-logs: ## Clean logs
 	@echo "$(GREEN)Cleaning logs...$(NC)"
 	@rm -rf logs
+	@mkdir logs
 	@echo "$(GREEN)Logs cleaned!$(NC)"
 
 clean-data:
 	@echo "$(GREEN)Cleaning data...$(NC)"
 	@rm -rf data
+	@mkdir data
 	@echo "$(GREEN)Data cleaned!$(NC)"
 
 refresh-state: clean clean-debug clean-logs clean-data ## Refresh state

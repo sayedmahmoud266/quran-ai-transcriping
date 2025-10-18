@@ -336,9 +336,13 @@ class AudioSplitter:
                     
                     zip_file.writestr(filename, segment_buffer.getvalue())
                     
-                    # Normalize text
-                    from app.quran_data import quran_data
-                    ayah_text_normalized = quran_data.normalize_arabic_text(ayah_text)
+                    # Normalize text (basic normalization)
+                    import re
+                    # Remove diacritics and normalize
+                    ayah_text_normalized = re.sub(r'[\u064B-\u065F\u0670\u0610-\u061A\u06D6-\u06ED]', '', ayah_text)
+                    ayah_text_normalized = ayah_text_normalized.replace('أ', 'ا').replace('إ', 'ا').replace('آ', 'ا')
+                    ayah_text_normalized = ayah_text_normalized.replace('ة', 'ه')
+                    ayah_text_normalized = ' '.join(ayah_text_normalized.split())
                     
                     # Calculate original timestamps
                     original_start = self._parse_timestamp(detail['audio_start_timestamp'])
@@ -575,3 +579,20 @@ https://github.com/sayedmahmoud266/quran-ai-transcriping
 
 # Create singleton instance
 audio_splitter = AudioSplitter()
+
+
+# Convenience function for direct import
+def split_audio_by_ayahs(audio_file_path: str, ayah_details: List[Dict]) -> Tuple[io.BytesIO, str]:
+    """
+    Split audio file by ayah timestamps and create a ZIP file.
+    
+    Convenience wrapper around AudioSplitter.split_audio_by_ayahs().
+    
+    Args:
+        audio_file_path: Path to the audio file
+        ayah_details: List of ayah details with timestamps
+        
+    Returns:
+        Tuple of (zip_buffer, zip_filename)
+    """
+    return audio_splitter.split_audio_by_ayahs(audio_file_path, ayah_details)
