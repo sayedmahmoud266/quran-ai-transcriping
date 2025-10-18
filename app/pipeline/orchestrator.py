@@ -5,8 +5,9 @@ This module provides a high-level interface for creating and executing
 the complete transcription pipeline.
 """
 
-from typing import Optional, List
+from typing import Optional, List, Any
 import logging
+import os
 
 from app.pipeline.base import Pipeline, PipelineContext
 from app.pipeline.steps import (
@@ -34,6 +35,56 @@ class PipelineOrchestrator:
     """
     
     @staticmethod
+    def _get_config_value(
+        key: str,
+        config: dict,
+        default: Any,
+        value_type: type = str
+    ) -> Any:
+        """
+        Get configuration value with fallback chain.
+        
+        Priority (highest to lowest):
+        1. Passed config parameter
+        2. Environment variable (PIPELINE_{KEY})
+        3. Default value
+        
+        Args:
+            key: Configuration key name
+            config: Configuration dictionary passed to function
+            default: Default value if not found in config or env
+            value_type: Type to cast the value to (int, float, str, bool)
+            
+        Returns:
+            Configuration value with proper type
+        """
+        # Priority 1: Check passed config
+        if key in config:
+            return config[key]
+        
+        # Priority 2: Check environment variable
+        env_key = f"PIPELINE_{key.upper()}"
+        env_value = os.getenv(env_key)
+        
+        if env_value is not None:
+            # Cast to appropriate type
+            try:
+                if value_type == bool:
+                    return env_value.lower() in ('true', '1', 'yes', 'on')
+                elif value_type == int:
+                    return int(env_value)
+                elif value_type == float:
+                    return float(env_value)
+                else:
+                    return env_value
+            except (ValueError, AttributeError) as e:
+                logger.warning(f"Failed to parse env var {env_key}={env_value} as {value_type.__name__}: {e}")
+                return default
+        
+        # Priority 3: Use default
+        return default
+    
+    @staticmethod
     def create_full_pipeline(
         model,
         processor,
@@ -43,6 +94,11 @@ class PipelineOrchestrator:
         """
         Create the complete transcription pipeline with all steps.
         
+        Configuration Priority (highest to lowest):
+        1. config parameter passed to this function
+        2. Environment variables (PIPELINE_*)
+        3. Default values
+        
         Args:
             model: Whisper model instance
             processor: Whisper processor instance
@@ -51,30 +107,54 @@ class PipelineOrchestrator:
             
         Returns:
             Configured Pipeline instance
+            
+        Environment Variables:
+            PIPELINE_TARGET_SAMPLE_RATE - Target sample rate (default: 16000)
+            PIPELINE_MIN_SILENCE_LEN - Min silence length in ms (default: 500)
+            PIPELINE_SILENCE_THRESH - Silence threshold in dBFS (default: -40)
+            PIPELINE_KEEP_SILENCE - Silence padding in ms (default: 200)
+            PIPELINE_MIN_CHUNK_DURATION - Min chunk duration in seconds (default: 3.0)
+            PIPELINE_MIN_SILENCE_GAP - Min silence gap in seconds (default: 0.5)
         """
         config = config or {}
         
         logger.info("Creating full transcription pipeline")
         
+        # Get configuration values with fallback chain
+        get_config = lambda key, default, vtype=str: PipelineOrchestrator._get_config_value(
+            key, config, default, vtype
+        )
+        
         pipeline = Pipeline(name="QuranTranscriptionPipeline")
         
         # Step 1: Audio Resampling
+        target_sample_rate = get_config('target_sample_rate', 16000, int)
         pipeline.add_step(AudioResamplingStep(
-            target_sample_rate=config.get('target_sample_rate', 16000)
+            target_sample_rate=target_sample_rate
         ))
+        logger.debug(f"AudioResamplingStep: target_sample_rate={target_sample_rate}")
         
         # Step 2: Silence Detection
+        min_silence_len = get_config('min_silence_len', 500, int)
+        silence_thresh = get_config('silence_thresh', -40, int)
+        keep_silence = get_config('keep_silence', 200, int)
         pipeline.add_step(SilenceDetectionStep(
-            min_silence_len=config.get('min_silence_len', 500),
-            silence_thresh=config.get('silence_thresh', -40),
-            keep_silence=config.get('keep_silence', 200)
+            min_silence_len=min_silence_len,
+            silence_thresh=silence_thresh,
+            keep_silence=keep_silence
         ))
+        logger.debug(f"SilenceDetectionStep: min_silence_len={min_silence_len}, "
+                    f"silence_thresh={silence_thresh}, keep_silence={keep_silence}")
         
         # Step 3: Chunk Merging
+        min_chunk_duration = get_config('min_chunk_duration', 3.0, float)
+        min_silence_gap = get_config('min_silence_gap', 0.5, float)
         pipeline.add_step(ChunkMergingStep(
-            min_chunk_duration=config.get('min_chunk_duration', 3.0),
-            min_silence_gap=config.get('min_silence_gap', 0.5)
+            min_chunk_duration=min_chunk_duration,
+            min_silence_gap=min_silence_gap
         ))
+        logger.debug(f"ChunkMergingStep: min_chunk_duration={min_chunk_duration}, "
+                    f"min_silence_gap={min_silence_gap}")
         
         # Step 4: Chunk Transcription
         pipeline.add_step(ChunkTranscriptionStep(
@@ -117,6 +197,7 @@ class PipelineOrchestrator:
         Create a partial pipeline with only specified steps.
         
         Useful for testing or running only part of the pipeline.
+        Uses same configuration priority as create_full_pipeline.
         
         Args:
             step_names: List of step names to include
@@ -130,20 +211,25 @@ class PipelineOrchestrator:
         """
         config = config or {}
         
+        # Get configuration values with fallback chain
+        get_config = lambda key, default, vtype=str: PipelineOrchestrator._get_config_value(
+            key, config, default, vtype
+        )
+        
         pipeline = Pipeline(name="PartialPipeline")
         
         step_map = {
             'AudioResamplingStep': lambda: AudioResamplingStep(
-                target_sample_rate=config.get('target_sample_rate', 16000)
+                target_sample_rate=get_config('target_sample_rate', 16000, int)
             ),
             'SilenceDetectionStep': lambda: SilenceDetectionStep(
-                min_silence_len=config.get('min_silence_len', 500),
-                silence_thresh=config.get('silence_thresh', -40),
-                keep_silence=config.get('keep_silence', 200)
+                min_silence_len=get_config('min_silence_len', 500, int),
+                silence_thresh=get_config('silence_thresh', -40, int),
+                keep_silence=get_config('keep_silence', 200, int)
             ),
             'ChunkMergingStep': lambda: ChunkMergingStep(
-                min_chunk_duration=config.get('min_chunk_duration', 3.0),
-                min_silence_gap=config.get('min_silence_gap', 0.5)
+                min_chunk_duration=get_config('min_chunk_duration', 3.0, float),
+                min_silence_gap=get_config('min_silence_gap', 0.5, float)
             ),
             'ChunkTranscriptionStep': lambda: ChunkTranscriptionStep(
                 model=model,
