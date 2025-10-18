@@ -68,6 +68,24 @@ clean-all: clean ## Clean everything including virtual environment
 	@rm -rf venv
 	@echo "$(GREEN)Full cleanup complete!$(NC)"
 
+clean-debug: ## Clean debug files
+	@echo "$(GREEN)Cleaning debug files...$(NC)"
+	@rm -rf .debug
+	@echo "$(GREEN)Debug files cleaned!$(NC)"
+
+clean-logs: ## Clean logs
+	@echo "$(GREEN)Cleaning logs...$(NC)"
+	@rm -rf logs
+	@echo "$(GREEN)Logs cleaned!$(NC)"
+
+clean-data:
+	@echo "$(GREEN)Cleaning data...$(NC)"
+	@rm -rf data
+	@echo "$(GREEN)Data cleaned!$(NC)"
+
+refresh-state: clean clean-debug clean-logs clean-data ## Refresh state
+	@echo "$(GREEN)State refreshed!$(NC)"
+
 freeze: ## Generate requirements.txt from current environment
 	@echo "$(GREEN)Generating requirements.txt...$(NC)"
 	@. venv/bin/activate && pip freeze > requirements.txt
