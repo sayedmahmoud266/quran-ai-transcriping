@@ -19,32 +19,51 @@ class TranscriptionCombiningStep(PipelineStep):
     """
     
     def validate_input(self, context: PipelineContext) -> bool:
-        """Validate that transcriptions are present."""
-        if not context.transcriptions:
-            self.logger.error("No transcriptions in context")
+        """Validate that cleaned transcriptions are present."""
+        if not hasattr(context, 'cleaned_transcriptions') or not context.cleaned_transcriptions:
+            self.logger.error("No cleaned_transcriptions in context")
             return False
         return True
     
     def process(self, context: PipelineContext) -> PipelineContext:
         """
-        Combine transcriptions.
+        Combine cleaned transcriptions into final text.
         
-        TODO: Implement combining logic
+        Uses cleaned_transcriptions from duplicate removal step and combines
+        the normalized text into a single string.
         """
-        transcriptions = context.transcriptions
+        cleaned_transcriptions = context.cleaned_transcriptions
         
-        self.logger.info(f"Combining {len(transcriptions)} transcriptions...")
+        self.logger.info(f"Combining {len(cleaned_transcriptions)} cleaned transcriptions...")
         
-        # TODO: Implement proper combining
-        combined = " ".join([t.get('text', '') for t in transcriptions if t.get('text')])
+        # Combine all normalized text from cleaned transcriptions
+        combined_transcription_normalized = " ".join([
+            t.get('normalized_text', '') 
+            for t in cleaned_transcriptions 
+            if t.get('normalized_text')
+        ])
         
+        # Also combine original text for reference
+        combined = " ".join([
+            t.get('text', '') 
+            for t in cleaned_transcriptions 
+            if t.get('text')
+        ])
+        
+        context.combined_transcription_normalized = combined_transcription_normalized
         context.final_transcription = combined
         
-        self.logger.info(f"Combined transcription: {len(combined)} characters")
+        self.logger.info(
+            f"Combined transcription: {len(combined)} characters, "
+            f"normalized: {len(combined_transcription_normalized)} characters"
+        )
         
         context.add_debug_info(self.name, {
-            'total_transcriptions': len(transcriptions),
-            'combined_length': len(combined)
+            'total_transcriptions': len(cleaned_transcriptions),
+            'combined_length': len(combined),
+            'combined_normalized_length': len(combined_transcription_normalized),
+            'word_count': len(combined_transcription_normalized.split()),
+            'combined_transcription_normalized': combined_transcription_normalized,
+            'combined': combined
         })
-        
         return context

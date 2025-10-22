@@ -53,6 +53,29 @@ class AudioSplitter:
             logger.error(f"Error parsing timestamp '{timestamp}': {e}")
             return 0
     
+    def _format_timestamp(self, milliseconds: int) -> str:
+        """
+        Convert milliseconds to timestamp string (HH:MM:SS.mmm).
+        
+        Args:
+            milliseconds: Time in milliseconds
+            
+        Returns:
+            Timestamp in format "HH:MM:SS.mmm"
+        """
+        try:
+            total_seconds = milliseconds // 1000
+            ms = milliseconds % 1000
+            
+            hours = total_seconds // 3600
+            minutes = (total_seconds % 3600) // 60
+            seconds = total_seconds % 60
+            
+            return f"{hours:02d}:{minutes:02d}:{seconds:02d}.{ms:03d}"
+        except Exception as e:
+            logger.error(f"Error formatting timestamp '{milliseconds}': {e}")
+            return "00:00:00.000"
+    
     def _detect_silence_gaps_in_segment(
         self,
         segment: AudioSegment,
@@ -180,90 +203,45 @@ class AudioSplitter:
         
         return closest_silence
     
-    def _calculate_adjusted_timestamps(
+    def _extract_timestamps_from_verse_details(
         self,
-        ayah_details: List[Dict],
-        audio: AudioSegment = None
+        ayah_details: List[Dict]
     ) -> List[Tuple[int, int, bool]]:
         """
-        Calculate adjusted timestamps by splitting gaps between ayahs.
-        Uses intelligent gap detection when consecutive ayahs have 0ms gaps.
+        Extract normalized timestamps from verse details.
+        Timestamps are already adjusted and normalized by the pipeline.
         
         Args:
-            ayah_details: List of ayah details with timestamps
-            audio: Optional audio segment for silence detection
+            ayah_details: List of ayah details with normalized timestamps
             
         Returns:
-            List of (adjusted_start_ms, adjusted_end_ms, uncertain_flag) tuples
+            List of (start_ms, end_ms, uncertain_flag) tuples
         """
-        adjusted_timestamps = []
+        timestamps = []
         
         for idx, detail in enumerate(ayah_details):
-            start_time = self._parse_timestamp(detail['audio_start_timestamp'])
-            end_time = self._parse_timestamp(detail['audio_end_timestamp'])
+            # Use normalized timestamps if available, otherwise fall back to original
+            if 'normalized_start_time' in detail and 'normalized_end_time' in detail:
+                # Timestamps are in seconds, convert to milliseconds
+                start_ms = int(detail['normalized_start_time'] * 1000)
+                end_ms = int(detail['normalized_end_time'] * 1000)
+            elif 'start_time' in detail and 'end_time' in detail:
+                # Fall back to original timestamps (also in seconds)
+                start_ms = int(detail['start_time'] * 1000)
+                end_ms = int(detail['end_time'] * 1000)
+            else:
+                # Legacy format with string timestamps
+                start_ms = self._parse_timestamp(detail.get('audio_start_timestamp', '00:00:00.000'))
+                end_ms = self._parse_timestamp(detail.get('audio_end_timestamp', '00:00:00.000'))
+            
+            # All timestamps from pipeline are already adjusted, so uncertain is always False
             uncertain = False
             
-            # Adjust start time (split gap with previous ayah)
-            if idx > 0:
-                prev_end = self._parse_timestamp(ayah_details[idx - 1]['audio_end_timestamp'])
-                gap = start_time - prev_end
-                
-                if gap == 0 and audio is not None:
-                    # INTELLIGENT GAP DETECTION: 0ms gap detected!
-                    logger.warning(f"⚠ Ayah {idx+1}: 0ms gap detected with previous ayah!")
-                    logger.info(f"  Performing secondary silence search around cutoff point {start_time}ms")
-                    
-                    # Search for silence near the cutoff point
-                    silence_midpoint = self._find_silence_near_cutoff(audio, start_time, search_window_ms=10000)
-                    
-                    if silence_midpoint:
-                        # Use the silence midpoint as the new split
-                        adjusted_start = silence_midpoint
-                        # Also update the previous ayah's end time
-                        if adjusted_timestamps:
-                            prev_start, prev_end, prev_uncertain = adjusted_timestamps[-1]
-                            adjusted_timestamps[-1] = (prev_start, silence_midpoint, prev_uncertain)
-                        logger.info(f"  ✓ Adjusted split point to {silence_midpoint}ms (silence-based)")
-                    else:
-                        # No silence found - use original but mark as uncertain
-                        adjusted_start = start_time
-                        uncertain = True
-                        logger.warning(f"  ✗ No silence found - using original cutoff (UNCERTAIN)")
-                
-                elif gap > 0:
-                    # Normal gap - split in the middle
-                    adjusted_start = prev_end + (gap // 2)
-                else:
-                    # Negative gap (overlap) - use original
-                    adjusted_start = start_time
-            else:
-                # First ayah - use original start time
-                adjusted_start = start_time
+            timestamps.append((start_ms, end_ms, uncertain))
             
-            # Adjust end time (split gap with next ayah)
-            if idx < len(ayah_details) - 1:
-                next_start = self._parse_timestamp(ayah_details[idx + 1]['audio_start_timestamp'])
-                gap = next_start - end_time
-                
-                if gap == 0 and audio is not None:
-                    # This will be handled when processing the next ayah
-                    adjusted_end = end_time
-                elif gap > 0:
-                    # Normal gap - split in the middle
-                    adjusted_end = end_time + (gap // 2)
-                else:
-                    # Negative gap (overlap) - use original
-                    adjusted_end = end_time
-            else:
-                # Last ayah - use original end time
-                adjusted_end = end_time
-            
-            adjusted_timestamps.append((adjusted_start, adjusted_end, uncertain))
-            
-            uncertainty_flag = " [UNCERTAIN]" if uncertain else ""
-            logger.debug(f"Ayah {idx+1}: Original [{start_time}-{end_time}] → Adjusted [{adjusted_start}-{adjusted_end}]{uncertainty_flag}")
+            logger.debug(f"Ayah {idx+1}: Using normalized timestamps [{start_ms}-{end_ms}]ms")
         
-        return adjusted_timestamps
+        return timestamps
     
     def _create_zip_with_timestamps(
         self,
@@ -344,9 +322,13 @@ class AudioSplitter:
                     ayah_text_normalized = ayah_text_normalized.replace('ة', 'ه')
                     ayah_text_normalized = ' '.join(ayah_text_normalized.split())
                     
-                    # Calculate original timestamps
-                    original_start = self._parse_timestamp(detail['audio_start_timestamp'])
-                    original_end = self._parse_timestamp(detail['audio_end_timestamp'])
+                    # Calculate original timestamps (before normalization)
+                    if 'start_time' in detail and 'end_time' in detail:
+                        original_start = int(detail['start_time'] * 1000)
+                        original_end = int(detail['end_time'] * 1000)
+                    else:
+                        original_start = self._parse_timestamp(detail.get('audio_start_timestamp', '00:00:00.000'))
+                        original_end = self._parse_timestamp(detail.get('audio_end_timestamp', '00:00:00.000'))
                     
                     # Detect silence gaps
                     silence_gaps = self._detect_silence_gaps_in_segment(
@@ -366,13 +348,13 @@ class AudioSplitter:
                     metadata_entry = {
                         "surah_number": surah,
                         "ayah_number": ayah_number_for_metadata,
-                        "ayah_text_tashkeel": ayah_text,
-                        "ayah_text_normalized": ayah_text_normalized,
+                        "ayah_text_tashkeel": detail.get('text', ayah_text),
+                        "ayah_text_normalized": detail.get('text_normalized', ayah_text_normalized),
                         "ayah_word_count": detail.get('ayah_word_count', len(ayah_text_normalized.split())),
                         "start_from_word": detail.get('start_from_word', 1),
                         "end_to_word": detail.get('end_to_word', len(ayah_text_normalized.split())),
-                        "audio_start_timestamp": detail.get('audio_start_timestamp', '00:00:00.000'),
-                        "audio_end_timestamp": detail.get('audio_end_timestamp', '00:00:00.000'),
+                        "audio_start_timestamp": self._format_timestamp(original_start),
+                        "audio_end_timestamp": self._format_timestamp(original_end),
                         "audio_start_offset_absolute_ms": original_start,
                         "audio_end_offset_absolute_ms": original_end,
                         "match_confidence": detail.get('match_confidence', 1.0),
@@ -513,9 +495,9 @@ https://github.com/sayedmahmoud266/quran-ai-transcriping
                     }
                 )
             
-            # Calculate adjusted timestamps with intelligent gap detection
-            logger.info("Calculating optimal ayah boundaries...")
-            adjusted_timestamps = self._calculate_adjusted_timestamps(ayah_details, audio)
+            # Extract normalized timestamps from verse details
+            logger.info("Extracting normalized timestamps from verse details...")
+            adjusted_timestamps = self._extract_timestamps_from_verse_details(ayah_details)
             
             # Create zip file
             zip_buffer, _ = self._create_zip_with_timestamps(

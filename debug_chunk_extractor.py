@@ -75,10 +75,12 @@ def extract_chunks(step_folder: str):
     chunks = None
     
     # Try to find chunks in various locations
-    if 'step_info' in data and 'chunks' in data['step_info']:
-        chunks = data['step_info']['chunks']
-    elif 'chunks' in data:
-        chunks = data['chunks']
+    if 'step_info' in data:
+        # if data.step_info.chunks is available use it, otherwise use data.step_info.verse_slices_timestamps
+        if 'chunks' in data['step_info']:
+            chunks = data['step_info']['chunks']
+        elif 'verse_slices_timestamps' in data['step_info']:
+            chunks = data['step_info']['verse_slices_timestamps']
     
     if not chunks:
         print(f"⚠️  No chunks found in data.json")

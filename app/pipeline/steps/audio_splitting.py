@@ -22,25 +22,39 @@ class AudioSplittingStep(PipelineStep):
     """
     
     def validate_input(self, context: PipelineContext) -> bool:
-        """Validate that verse details are present."""
-        if not context.verse_details:
-            self.logger.error("No verse details in context")
+        """Validate that verse_slices_timestamps are present."""
+        if not hasattr(context, 'verse_slices_timestamps') or not context.verse_slices_timestamps:
+            self.logger.error("No verse_slices_timestamps in context")
             return False
         return True
     
     def process(self, context: PipelineContext) -> PipelineContext:
         """
-        Mark data as ready for audio splitting.
+        Copy verse_slices_timestamps to verse_details and mark as ready for splitting.
         """
-        verse_details = context.verse_details
+        # Get verse_slices_timestamps from context
+        verse_slices_timestamps = context.verse_slices_timestamps
+        
+        self.logger.info(f"Copying {len(verse_slices_timestamps)} verses to verse_details...")
+        
+        # Copy verse_slices_timestamps to verse_details
+        # This creates a deep copy so modifications don't affect the original
+        verse_details = []
+        for verse in verse_slices_timestamps:
+            verse_details.append(verse.copy())
+        
+        # Set verse_details in context
+        context.verse_details = verse_details
+        
+        # Mark metadata as ready for splitting
+        context.set('ready_for_splitting', True)
         
         self.logger.info(f"Prepared {len(verse_details)} verses for audio splitting")
         
-        context.set('ready_for_splitting', True)
-        
         context.add_debug_info(self.name, {
             'total_verses': len(verse_details),
-            'ready': True
+            'ready': True,
+            'verse_details': verse_details
         })
         
         return context
