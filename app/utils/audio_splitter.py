@@ -280,8 +280,16 @@ class AudioSplitter:
                         start_time, end_time = timestamp_tuple
                         uncertain = False
                     
+                    # Skip segments with 0 duration (shouldn't happen after audio_splitting step processing)
+                    if end_time - start_time <= 0:
+                        logger.warning(f"Skipping ayah {detail['ayah_number']} with 0ms duration")
+                        continue
+                    
                     # Extract segment
                     segment = audio[start_time:end_time]
+                    
+                    # Check if this is a multi-ayah file
+                    multi_ayahs = detail.get('multi_ayahs', None)
                     
                     # Generate filename
                     surah = detail['surah_number']
@@ -289,7 +297,14 @@ class AudioSplitter:
                     is_basmala = detail.get('is_basmala', False)
                     ayah_text = detail.get('ayah_text_tashkeel', '')
                     
-                    if is_basmala:
+                    if multi_ayahs:
+                        # Multi-ayah file: use range in filename
+                        first_ayah = multi_ayahs[0]['ayah_number']
+                        last_ayah = multi_ayahs[-1]['ayah_number']
+                        filename = f"surah_{surah:03d}_ayah_{first_ayah:03d}-{last_ayah:03d}{file_ext}"
+                        ayah_number_for_metadata = first_ayah
+                        logger.info(f"Creating multi-ayah file: {filename} ({len(multi_ayahs)} ayahs)")
+                    elif is_basmala:
                         filename = f"surah_{surah:03d}_ayah_000_basmala{file_ext}"
                         ayah_number_for_metadata = 0
                     else:
@@ -370,6 +385,22 @@ class AudioSplitter:
                         "silence_gaps": silence_gaps if silence_gaps else [],
                         "cutoff_uncertain": uncertain
                     }
+                    
+                    # Add multi-ayah information if applicable
+                    if multi_ayahs:
+                        metadata_entry["is_multi_ayah"] = True
+                        metadata_entry["ayahs_in_file"] = [
+                            {
+                                "ayah_number": a['ayah_number'],
+                                "text": a['text'],
+                                "text_normalized": a['text_normalized'],
+                                "is_basmalah": a.get('is_basmalah', False)
+                            }
+                            for a in multi_ayahs
+                        ]
+                        metadata_entry["total_ayahs_in_file"] = len(multi_ayahs)
+                    else:
+                        metadata_entry["is_multi_ayah"] = False
                     
                     ayah_metadata.append(metadata_entry)
                     

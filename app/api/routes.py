@@ -227,10 +227,17 @@ def _register_routes(app: FastAPI):
         if not result_path or not result_path.exists():
             raise HTTPException(status_code=404, detail="Result file not found")
         
+        # Generate filename using original uploaded filename
+        original_filename = job.get('original_filename', 'audio')
+        # Remove extension from original filename
+        from pathlib import Path
+        filename_without_ext = Path(original_filename).stem
+        download_filename = f"{filename_without_ext}_trs_{job_id}.zip"
+        
         return FileResponse(
             path=str(result_path),
             media_type="application/zip",
-            filename=f"transcription_{job_id}.zip"
+            filename=download_filename
         )
     
     @app.get("/jobs")

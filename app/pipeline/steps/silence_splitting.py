@@ -31,6 +31,8 @@ class SilenceSplittingStep(PipelineStep):
         
         Calculates silence gaps between consecutive verses and splits them in half,
         adding each half to the end of the previous verse and start of the next verse.
+        
+        Note: Verses with 0 duration (from chunk_reuse) are skipped in gap calculation.
         """
         verse_slices_timestamps = context.verse_slices_timestamps
         
@@ -40,6 +42,19 @@ class SilenceSplittingStep(PipelineStep):
         for i, verse in enumerate(verse_slices_timestamps):
             start_time = verse['start_time']
             end_time = verse['end_time']
+            duration = end_time - start_time
+            
+            # Skip verses with 0 duration (reused chunks from multi-ayah case)
+            if duration <= 0:
+                self.logger.debug(
+                    f"Skipping silence splitting for verse {verse['surah_number']}:{verse['ayah_number']} "
+                    f"(0 duration - chunk reuse case)"
+                )
+                verse['prev_gap_duration'] = 0.0
+                verse['normalized_start_time'] = 0.0
+                verse['normalized_end_time'] = 0.0
+                verse['normalized_duration'] = 0.0
+                continue
             
             # Calculate gap with previous verse
             if i > 0:

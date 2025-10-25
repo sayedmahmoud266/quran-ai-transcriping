@@ -81,6 +81,9 @@ class PipelineContext:
             'duration': duration,
             'data': data or {}
         }
+    # add json dump of the context
+    def __str__(self):
+        return json.dumps(self.__dict__)
 
 
 class PipelineStep(ABC):
@@ -270,6 +273,9 @@ class PipelineStep(ABC):
                     }
                     for t in context.transcriptions[:5]  # First 5 transcriptions
                 ]
+
+            debug_data['context_dump'] = context.__dict__
+            debug_data['context_dump']['matched_verses'] = [verse.to_dict() for verse in context.matched_verses]
             
             # Save audio if available
             audio_files = []
