@@ -126,7 +126,7 @@ GET /health
 ```
 Returns the health status of the API and model information.
 
-#### 3. Transcribe Audio
+#### 3. Transcribe Audio (Sync)
 ```
 POST /transcribe
 ```
@@ -210,6 +210,29 @@ POST /transcribe
 - For Surah 1 (Al-Fatiha), Basmala has `ayah_number: 1`
 - For other surahs, Basmala has `ayah_number: 0` (not officially numbered)
 - Multiple consecutive ayahs are automatically detected and returned
+
+#### 4. Async Transcription
+```
+POST /transcribe/async
+GET /jobs/{job_id}/status
+GET /jobs/{job_id}/download
+GET /jobs/{job_id}/metadata
+GET /jobs
+```
+
+For long-running transcriptions, use the async API. See [ASYNC_API.md](docs/ASYNC_API.md) for details.
+
+#### 5. Job Management
+```
+POST /jobs/resume
+DELETE /jobs/finished
+```
+
+**Resume Job Queue**: Restart any jobs that are still in processing status (useful after server restart).
+
+**Clear Finished Jobs**: Delete all completed/failed jobs from database and remove their files.
+
+See [JOB_MANAGEMENT.md](docs/JOB_MANAGEMENT.md) for details.
 
 ### Example Usage
 
@@ -299,6 +322,8 @@ fetch('http://localhost:8000/transcribe', {
 ## 📖 Documentation
 
 - **[ALGORITHM.md](docs/ALGORITHM.md)** - Complete technical documentation with diagrams
+- **[ASYNC_API.md](docs/ASYNC_API.md)** - Async API documentation for background job processing
+- **[JOB_MANAGEMENT.md](docs/JOB_MANAGEMENT.md)** - Job management APIs (resume queue, clear jobs)
 - **[PROJECT_STATUS.md](docs/PROJECT_STATUS.md)** - Project status, metrics, and roadmap
 - **[Diagrams](docs/.diagrams/)** - PlantUML source files and rendered images
 
@@ -373,6 +398,30 @@ The system uses a sophisticated **constraint propagation algorithm** for verse m
 For complete technical details, see [docs/ALGORITHM.md](docs/ALGORITHM.md).
 
 ![Algorithm Flow](docs/.diagrams/images/complete-flow.png)
+
+## ⚠️ Important: Recent Refactoring (2025-10-08)
+
+**Major architectural changes have been made to improve accuracy and simplicity:**
+
+### What Changed
+- **Removed Word Timestamps**: Eliminated inaccurate linear interpolation of word timestamps
+- **Silence-Based Boundaries**: Now relies solely on naturally detected silence boundaries from audio chunks (step 03_chunks_merged)
+- **Uthmani Text**: Uses full Uthmani tashkeel from `res/quran-uthmani_all.txt`
+- **Direct Chunk Mapping**: Simplified chunk mapping to use direct timestamp overlap instead of fuzzy text matching
+
+### Why This Matters for Future Development
+1. **No Word-Level Timestamps**: The API no longer returns `word_timestamps` in the response
+2. **Chunk Boundaries are Truth**: All timing relies on pydub's silence detection (step 03_chunks_merged)
+3. **Simplified Architecture**: ~200 lines of complex logic removed for better maintainability
+4. **Uthmani Text Source**: Always use `quran_data.get_verse_with_tashkeel()` for ayah text
+
+### Future Word Timestamp Implementation
+When adding accurate word timestamps back:
+- Use Whisper's built-in `return_timestamps='word'` parameter
+- Or integrate forced alignment tools (wav2vec2, Montreal Forced Aligner)
+- **Do NOT** use linear interpolation (time_per_word = duration / word_count)
+
+See [REFACTORING_SUMMARY.md](REFACTORING_SUMMARY.md) for complete details.
 
 ## 🚀 Future Enhancements
 

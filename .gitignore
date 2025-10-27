@@ -48,7 +48,9 @@ models/
 # Temporary files
 *.tmp
 temp/
-uploads/
+
+# Data directory (uploads, results, database)
+data/
 
 # Quran data cache
 quran_simple.txt
@@ -56,3 +58,8 @@ quran_simple.txt
 # Environment variables
 .env
 .env.local
+
+# Logs
+logs/
+*.log
+.debug

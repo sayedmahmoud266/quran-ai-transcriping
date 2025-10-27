@@ -2,6 +2,34 @@
 
 All notable changes to the Quran AI Transcription API project.
 
+## [2.2.0] - 2025-10-03
+
+### Added
+- **Intelligent Gap Detection**: Advanced silence-based split point detection for consecutive ayahs
+  - Automatic detection of 0ms gaps between ayahs
+  - Secondary silence search (±10 seconds) around problematic cutoff points
+  - Uses closest silence gap midpoint for optimal splitting
+  - Uncertainty flagging when no silence found
+- **Enhanced Metadata**: New `cutoff_uncertain` field in metadata.json
+  - Flags ayahs with uncertain split points for manual review
+  - Helps identify potential audio quality issues
+
+### Changed
+- `_calculate_adjusted_timestamps()` now accepts audio segment for silence detection
+- Returns 3-tuple timestamps: `(start_ms, end_ms, uncertain_flag)`
+- Enhanced logging with detailed silence search information
+
+### Fixed
+- 🐛 **Critical**: Fixed mid-sentence ayah cuts in continuous recitations
+- 🐛 **Critical**: Prevented long ayah truncation (e.g., Surah 12, Ayah 6)
+- 🐛 Improved split point accuracy for ayahs without natural pauses
+
+### Technical Details
+- New method: `_find_silence_near_cutoff()` for intelligent gap detection
+- Search window: ±10 seconds from cutoff point
+- Silence detection: 500ms minimum, -40dBFS threshold
+- Automatically adjusts both current and previous ayah boundaries
+
 ## [1.3.0] - 2025-10-01
 
 ### Added

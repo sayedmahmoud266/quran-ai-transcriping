@@ -54,7 +54,14 @@ This document describes the implementation details of the Quran AI Transcription
 **Endpoints:**
 - `GET /`: API information
 - `GET /health`: Health check
-- `POST /transcribe`: Main transcription endpoint
+- `POST /transcribe`: Synchronous transcription endpoint
+- `POST /transcribe/async`: Asynchronous transcription (background job)
+- `GET /jobs/{job_id}/status`: Check job status
+- `GET /jobs/{job_id}/download`: Download result zip
+- `GET /jobs/{job_id}/metadata`: Get metadata JSON
+- `GET /jobs`: List all jobs
+- `POST /jobs/resume`: Resume interrupted jobs
+- `DELETE /jobs/finished`: Clear finished jobs
 
 **Request Flow:**
 1. Receive audio file upload
@@ -114,24 +121,29 @@ This document describes the implementation details of the Quran AI Transcription
 
 ### 4. Quran Data (app/quran_data.py)
 
-**Purpose:** Quran verse matching and metadata handling.
+**Purpose:** Quran verse matching and metadata handling using constraint propagation algorithm.
 
 **Key Features:**
+- PyQuran integration (v1.0.1)
+- Constraint propagation algorithm
+- Backward gap filling
+- Forward consecutive matching
 - Arabic text normalization
-- Verse matching (placeholder for full implementation)
-- Timestamp formatting
-- Word counting
+- Fuzzy matching with RapidFuzz
+- Basmala detection
 
 **Current Implementation:**
-- Basic text normalization
-- Placeholder verse matching
-- Timestamp utilities
+- **Phase 1**: Constraint propagation to determine surah
+- **Phase 2**: Backward gap filling for missed ayahs
+- **Phase 3**: Forward consecutive matching
+- **100% accuracy** on tested surahs (97, 55)
 
-**Future Enhancements:**
-- Integration with Quran database (Tanzil, quran-json)
-- Fuzzy matching for verse detection
-- Multiple recitation style support
-- Tajweed rule detection
+**Algorithm Details:**
+- Uses PyQuran's `search_sequence()` with mode 3
+- Batch-based analysis (5 words per batch)
+- Intersection of results across batches
+- Fuzzy matching thresholds: 70-75%
+- Consecutive miss tolerance: 5 misses
 
 ## Technical Decisions
 
@@ -399,26 +411,34 @@ api:
 
 ## Future Improvements
 
+### Completed Features ✓
+1. ✓ PyQuran database integration
+2. ✓ Constraint propagation algorithm
+3. ✓ 100% verse detection accuracy
+4. ✓ Async API with background jobs
+5. ✓ Job management (resume, clear)
+6. ✓ Audio splitting by ayahs
+
 ### Short Term
-1. Add proper Quran database integration
-2. Implement comprehensive testing
-3. Add request validation with Pydantic models
-4. Improve error messages
-5. Add API documentation examples
+1. Implement comprehensive testing
+2. Add request validation with Pydantic models
+3. Improve error messages
+4. Add API documentation examples
+5. Docker deployment
 
 ### Medium Term
-1. Batch processing support
+1. Multi-surah detection
 2. WebSocket for streaming
-3. Confidence scores
-4. Multiple recitation styles
-5. Docker deployment
+3. Partial ayah support
+4. Multiple recitation styles (Qira'at)
+5. Reciter identification
 
 ### Long Term
 1. Microservices architecture
 2. Distributed processing
 3. Real-time transcription
 4. Mobile app support
-5. Multi-language support
+5. Web UI for testing
 
 ## Maintenance
 
@@ -445,12 +465,17 @@ api:
 - `torch`: PyTorch for model inference
 - `librosa`: Audio processing
 - `pydub`: Audio format conversion
+- `pyquran`: Quran text and search (v1.0.1)
+- `rapidfuzz`: Fast fuzzy string matching
+- `pyarabic`: Arabic text processing
 
 ### Version Compatibility
 - Python: 3.8+
 - PyTorch: 2.1.1
 - Transformers: 4.35.2
 - FastAPI: 0.104.1
+- PyQuran: 1.0.1
+- RapidFuzz: 3.5.2
 
 See `requirements.txt` for complete dependency list.
 
