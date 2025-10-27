@@ -288,28 +288,20 @@ class AudioSplitter:
                     # Extract segment
                     segment = audio[start_time:end_time]
                     
-                    # Check if this is a multi-ayah file
-                    multi_ayahs = detail.get('multi_ayahs', None)
-                    
-                    # Generate filename
+                    # Generate filename (single ayah only - multi-ayah chunks are now split)
                     surah = detail['surah_number']
                     ayah = detail['ayah_number']
                     is_basmala = detail.get('is_basmala', False)
                     ayah_text = detail.get('ayah_text_tashkeel', '')
                     
-                    if multi_ayahs:
-                        # Multi-ayah file: use range in filename
-                        first_ayah = multi_ayahs[0]['ayah_number']
-                        last_ayah = multi_ayahs[-1]['ayah_number']
-                        filename = f"surah_{surah:03d}_ayah_{first_ayah:03d}-{last_ayah:03d}{file_ext}"
-                        ayah_number_for_metadata = first_ayah
-                        logger.info(f"Creating multi-ayah file: {filename} ({len(multi_ayahs)} ayahs)")
-                    elif is_basmala:
+                    if is_basmala:
                         filename = f"surah_{surah:03d}_ayah_000_basmala{file_ext}"
                         ayah_number_for_metadata = 0
                     else:
                         filename = f"surah_{surah:03d}_ayah_{ayah:03d}{file_ext}"
                         ayah_number_for_metadata = ayah
+                    
+                    logger.debug(f"Creating single ayah file: {filename}")
                     
                     # Export segment
                     segment_buffer = io.BytesIO()
@@ -386,21 +378,16 @@ class AudioSplitter:
                         "cutoff_uncertain": uncertain
                     }
                     
-                    # Add multi-ayah information if applicable
-                    if multi_ayahs:
-                        metadata_entry["is_multi_ayah"] = True
-                        metadata_entry["ayahs_in_file"] = [
-                            {
-                                "ayah_number": a['ayah_number'],
-                                "text": a['text'],
-                                "text_normalized": a['text_normalized'],
-                                "is_basmalah": a.get('is_basmalah', False)
-                            }
-                            for a in multi_ayahs
-                        ]
-                        metadata_entry["total_ayahs_in_file"] = len(multi_ayahs)
-                    else:
-                        metadata_entry["is_multi_ayah"] = False
+                    # Mark if this was extracted from multi-ayah chunk (for debugging)
+                    if detail.get('extracted_from_multi_ayah', False):
+                        metadata_entry["extracted_from_multi_ayah"] = True
+                    
+                    # Add word-level alignments if available
+                    word_alignments = detail.get('word_alignments', [])
+                    if word_alignments:
+                        metadata_entry["word_alignments"] = word_alignments
+                        metadata_entry["alignment_method"] = detail.get('alignment_method', 'unknown')
+                        metadata_entry["word_count_aligned"] = len(word_alignments)
                     
                     ayah_metadata.append(metadata_entry)
                     

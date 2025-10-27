@@ -75,6 +75,29 @@ class VerseMatchingStep(PipelineStep):
         # Step 3: Select the best match (highest similarity score)
         best_match = max(results, key=lambda r: r.similarity)
         self.logger.info(f"Best match found with {best_match.similarity:.2f}% similarity")
+
+
+        # Step 3.5: Sort verses by surah number first, then ayah number
+        sorted_best_match = sorted(best_match.verses, key=lambda v: (v.surah_number, v.ayah_number))
+        
+        # If transcription starts with basmalah, ensure match also starts with basmalah
+        # Remove all ayahs before the basmalah
+        if ctn.startswith("بسم الله الرحمن الرحيم"):
+            # Find the index of the first basmalah
+            basmalah_index = None
+            for i, verse in enumerate(sorted_best_match):
+                if verse.is_basmalah:
+                    basmalah_index = i
+                    break
+            
+            # Keep only verses from basmalah onwards
+            if basmalah_index is not None:
+                sorted_best_match = sorted_best_match[basmalah_index:]
+                self.logger.info(f"Transcription starts with basmalah, removed {basmalah_index} ayahs before basmalah")
+            else:
+                self.logger.warning("Transcription starts with basmalah but no basmalah found in match")
+
+        best_match.verses = sorted_best_match
         
         # Step 4: Extract verse details from the best match
         # Convert QuranVerse objects to dictionaries for easier handling
@@ -332,6 +355,10 @@ class VerseMatchingStep(PipelineStep):
         """
         Find the best chunk combination for a verse using SequenceMatcher.
         
+        This handles cases where a chunk starts in the middle of an ayah and extends
+        to the middle/end of the next ayah. We try combining consecutive chunks
+        until we find a good match or run out of chunks.
+        
         Args:
             verse_text: The normalized verse text to match
             chunks: List of all chunks
@@ -341,8 +368,13 @@ class VerseMatchingStep(PipelineStep):
         Returns:
             Dictionary with best match info or None if no good match found
         """
-        # Try different chunk combinations (1 to 5 chunks ahead)
-        max_chunks_to_try = min(5, len(chunks) - start_idx)
+        # Try different chunk combinations - be aggressive and try up to all remaining chunks
+        # This handles cases where chunks are split in the middle of ayahs
+        max_chunks_to_try = len(chunks) - start_idx
+        
+        self.logger.debug(
+            f"Trying to match verse ({target_word_count} words) using chunks {start_idx} to {start_idx + max_chunks_to_try - 1}"
+        )
         
         best_match = None
         best_similarity = 0.0
@@ -367,9 +399,16 @@ class VerseMatchingStep(PipelineStep):
             
             # Check if this is a better match
             # Prioritize: 1) High similarity, 2) Low word difference
+            # Be more lenient when combining multiple chunks (partial ayahs case)
             is_better = False
             
-            if similarity >= self.SIMILARITY_THRESHOLD:
+            # Lower threshold for multi-chunk combinations (partial ayahs)
+            effective_threshold = self.SIMILARITY_THRESHOLD
+            if num_chunks > 1:
+                # For partial ayah cases, accept lower similarity
+                effective_threshold = max(0.6, self.SIMILARITY_THRESHOLD - 0.1)
+            
+            if similarity >= effective_threshold:
                 if best_match is None:
                     is_better = True
                 elif similarity > best_similarity + 0.05:  # Significantly better similarity
@@ -433,6 +472,7 @@ class VerseMatchingStep(PipelineStep):
         )
         
         # Try to fit multiple consecutive verses into this chunk
+        # This handles both complete and partial ayahs in the chunk
         matched_entries = []
         total_verse_words = 0
         verses_fitted = []
@@ -446,7 +486,12 @@ class VerseMatchingStep(PipelineStep):
                 verses_fitted.append(verse)
                 total_verse_words = potential_total
             else:
-                # Can't fit more verses
+                # Can't fit more verses completely
+                # But check if chunk contains the BEGINNING of this verse (partial match)
+                if len(verses_fitted) >= 1:
+                    # Try adding this verse as well (chunk may contain partial)
+                    verses_fitted.append(verse)
+                    total_verse_words = potential_total
                 break
         
         # Need at least 2 verses to be a multi-ayah case
@@ -454,19 +499,74 @@ class VerseMatchingStep(PipelineStep):
             return None
         
         # Check similarity between chunk and combined verses
+        # The chunk may contain complete ayahs + partial next ayah
         combined_verse_text = ' '.join(v['text_normalized'] for v in verses_fitted)
+        
+        # Check if chunk matches the BEGINNING of combined verses (for partial matches)
+        # Use SequenceMatcher to find the best alignment
         matcher = SequenceMatcher(None, chunk_text, combined_verse_text)
         similarity = matcher.ratio()
         
-        if similarity < 0.75:  # Need at least 75% similarity
+        # Also check if chunk is a prefix of combined verses (partial ayah case)
+        chunk_words = chunk_text.split()
+        combined_words = combined_verse_text.split()
+        prefix_match = all(cw == vw for cw, vw in zip(chunk_words, combined_words[:len(chunk_words)]))
+        
+        if prefix_match:
+            # Chunk is a perfect prefix of combined verses (partial ayah case)
+            similarity = max(similarity, 0.85)  # Boost similarity for prefix matches
+            self.logger.info(
+                f"Chunk {chunk.get('chunk_index')} is a prefix match for {len(verses_fitted)} verses "
+                f"(chunk: {len(chunk_words)} words, combined: {len(combined_words)} words)"
+            )
+        
+        if similarity < 0.70:  # Lowered threshold to handle partial matches
             self.logger.warning(
                 f"Multi-ayah similarity too low: {similarity:.2%} for {len(verses_fitted)} verses"
             )
             return None
         
+        # Check if we need additional chunks to complete the last ayah
+        # This handles cases where an ayah is split across multiple chunks
+        chunks_used = [chunk]
+        next_chunk_idx = start_chunk_idx + 1
+        
+        # If the last verse is incomplete (chunk is shorter than expected), check next chunks
+        last_verse = verses_fitted[-1]
+        if chunk_word_count < total_verse_words:
+            # The chunk doesn't contain all the words - last ayah is split
+            words_needed = total_verse_words - chunk_word_count
+            
+            self.logger.info(
+                f"Last ayah appears split across chunks. Need {words_needed} more words. "
+                f"Checking next chunks..."
+            )
+            
+            # Try to find the remaining words in subsequent chunks
+            while next_chunk_idx < len(all_chunks) and words_needed > 0:
+                next_chunk = all_chunks[next_chunk_idx]
+                next_chunk_words = len(next_chunk.get('normalized_text', '').split())
+                
+                # Check if this chunk contains part of the last ayah
+                # by checking if it matches the remaining text
+                remaining_verse_text = ' '.join(last_verse['text_normalized'].split()[-words_needed:])
+                next_chunk_text = next_chunk.get('normalized_text', '')
+                
+                # Check if next chunk starts with remaining verse text
+                if next_chunk_text.startswith(remaining_verse_text.split()[0]):
+                    chunks_used.append(next_chunk)
+                    words_needed -= next_chunk_words
+                    next_chunk_idx += 1
+                    self.logger.info(
+                        f"Added chunk {next_chunk.get('chunk_index')} to complete last ayah "
+                        f"({next_chunk_words} words)"
+                    )
+                else:
+                    break
+        
         # Success! Create matched entries for all verses
         self.logger.info(
-            f"Multi-ayah match confirmed: {len(verses_fitted)} verses, "
+            f"Multi-ayah match confirmed: {len(verses_fitted)} verses across {len(chunks_used)} chunks, "
             f"{total_verse_words} words, similarity={similarity:.2%}"
         )
         
@@ -517,6 +617,6 @@ class VerseMatchingStep(PipelineStep):
             'matched_entries': matched_entries,
             'num_ayahs': len(verses_fitted),
             'chunk_index': chunk.get('chunk_index'),
-            'next_chunk_index': start_chunk_idx + 1,  # Move to next chunk
+            'next_chunk_index': next_chunk_idx,  # Skip all chunks used
             'verses_processed': len(verses_fitted)
         }

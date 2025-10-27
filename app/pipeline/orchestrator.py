@@ -18,6 +18,7 @@ from app.pipeline.steps import (
     DuplicateRemovalStep,
     TranscriptionCombiningStep,
     VerseMatchingStep,
+    TranscriptionAlignmentStep,
     TimestampCalculationStep,
     SilenceSplittingStep,
     AudioSplittingStep,
@@ -172,6 +173,15 @@ class PipelineOrchestrator:
         # Step 7: Verse Matching
         pipeline.add_step(VerseMatchingStep())
         
+        # Step 7.5: Transcription Alignment (Word-level timestamps)
+        alignment_method = get_config('alignment_method', 'wav2vec2', str)
+        alignment_language = get_config('alignment_language', 'ar', str)
+        pipeline.add_step(TranscriptionAlignmentStep(
+            alignment_method=alignment_method,
+            language=alignment_language
+        ))
+        logger.debug(f"TranscriptionAlignmentStep: alignment_method={alignment_method}, language={alignment_language}")
+        
         # Step 8: Timestamp Calculation
         pipeline.add_step(TimestampCalculationStep())
         
@@ -239,6 +249,10 @@ class PipelineOrchestrator:
             'DuplicateRemovalStep': lambda: DuplicateRemovalStep(),
             'TranscriptionCombiningStep': lambda: TranscriptionCombiningStep(),
             'VerseMatchingStep': lambda: VerseMatchingStep(),
+            'TranscriptionAlignmentStep': lambda: TranscriptionAlignmentStep(
+                alignment_method=get_config('alignment_method', 'wav2vec2', str),
+                language=get_config('alignment_language', 'ar', str)
+            ),
             'TimestampCalculationStep': lambda: TimestampCalculationStep(),
             'SilenceSplittingStep': lambda: SilenceSplittingStep(),
             'AudioSplittingStep': lambda: AudioSplittingStep(),
