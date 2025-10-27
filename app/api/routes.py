@@ -10,8 +10,9 @@ import logging
 from pathlib import Path
 from typing import Optional
 from fastapi import FastAPI, File, UploadFile, HTTPException
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from app.queue.job_queue import job_queue
 from app.queue.worker import background_worker
@@ -41,6 +42,11 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     
+    # Mount static files if they exist
+    static_dir = Path(__file__).parent.parent / "static"
+    if static_dir.exists():
+        app.mount("/assets", StaticFiles(directory=str(static_dir / "assets")), name="assets")
+    
     # Register routes
     _register_routes(app)
     
@@ -50,9 +56,9 @@ def create_app() -> FastAPI:
 def _register_routes(app: FastAPI):
     """Register all API routes."""
     
-    @app.get("/")
-    async def root():
-        """Root endpoint with API information."""
+    @app.get("/api/info")
+    async def api_info():
+        """API information endpoint."""
         return {
             "service": "Quran AI Transcription API",
             "version": "2.0.0",
@@ -68,6 +74,35 @@ def _register_routes(app: FastAPI):
                 "clear_finished": "/jobs/finished"
             }
         }
+    
+    @app.get("/")
+    async def root():
+        """Serve the web UI."""
+        static_dir = Path(__file__).parent.parent / "static"
+        index_file = static_dir / "index.html"
+        
+        if index_file.exists():
+            with open(index_file, 'r') as f:
+                content = f.read()
+            return HTMLResponse(content=content)
+        else:
+            # Fallback to API info if UI not built
+            return {
+                "service": "Quran AI Transcription API",
+                "version": "2.0.0",
+                "status": "running",
+                "message": "Web UI not built. Run 'cd frontend && npm install && npm run build' to build the UI.",
+                "endpoints": {
+                    "health": "/health",
+                    "transcribe_async": "/transcribe/async",
+                    "job_status": "/jobs/{job_id}/status",
+                    "job_metadata": "/jobs/{job_id}/metadata",
+                    "download_result": "/jobs/{job_id}/download",
+                    "list_jobs": "/jobs",
+                    "resume_queue": "/jobs/resume",
+                    "clear_finished": "/jobs/finished"
+                }
+            }
     
     @app.get("/health")
     async def health_check():

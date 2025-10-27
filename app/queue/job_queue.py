@@ -29,6 +29,21 @@ class JobQueue:
     def __init__(self):
         """Initialize the job queue."""
         self.logger = logging.getLogger(__name__)
+        self.db = database
+    
+    def _map_job_fields(self, job: Dict) -> Dict:
+        """
+        Map database fields to API fields.
+        
+        Args:
+            job: Job dictionary from database
+            
+        Returns:
+            Job dictionary with mapped fields
+        """
+        if job and 'id' in job:
+            job['job_id'] = job.pop('id')
+        return job
     
     def create_job(self, audio_file_path: str, original_filename: str) -> str:
         """
@@ -56,7 +71,8 @@ class JobQueue:
         Returns:
             Job dictionary or None if not found
         """
-        return database.get_job(job_id)
+        job = database.get_job(job_id)
+        return self._map_job_fields(job) if job else None
     
     def get_job_status(self, job_id: str) -> Optional[str]:
         """
@@ -78,7 +94,8 @@ class JobQueue:
         Returns:
             List of job dictionaries
         """
-        return database.get_all_jobs()
+        jobs = database.get_all_jobs()
+        return [self._map_job_fields(job) for job in jobs]
     
     def get_next_queued_job(self) -> Optional[Dict]:
         """
@@ -259,7 +276,7 @@ class JobQueue:
             Number of queued jobs
         """
         jobs = self.get_all_jobs()
-        return sum(1 for job in jobs if job['status'] == JobStatus.QUEUED.value)
+        return sum(1 for job in jobs if job['status'] == 'queued')
 
 
 # Singleton instance

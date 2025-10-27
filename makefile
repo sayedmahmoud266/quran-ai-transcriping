@@ -1,4 +1,4 @@
-.PHONY: start setup test clean help install dev
+.PHONY: start setup test clean help install dev build-frontend install-frontend run dev-frontend dev-backend
 
 # Default target
 .DEFAULT_GOAL := help
@@ -17,13 +17,15 @@ help: ## Show this help message
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  $(YELLOW)%-15s$(NC) %s\n", $$1, $$2}'
 	@echo ""
 
-start: ## Start the API server (recommended)
+start: build-frontend ## Start the API server with UI (recommended)
 	@echo "$(GREEN)Starting Quran AI Transcription API...$(NC)"
 	@if [ ! -d "venv" ]; then \
 		echo "$(RED)Virtual environment not found. Run 'make setup' first.$(NC)"; \
 		exit 1; \
 	fi
 	@. venv/bin/activate && python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+run: start ## Alias for start
 
 setup: ## Install dependencies and setup virtual environment
 	@echo "$(GREEN)Setting up virtual environment...$(NC)"
@@ -40,9 +42,46 @@ setup: ## Install dependencies and setup virtual environment
 
 install: setup ## Alias for setup
 
-dev: ## Start server in development mode with auto-reload
+install-frontend: ## Install frontend dependencies
+	@echo "$(GREEN)Installing frontend dependencies...$(NC)"
+	@if [ ! -d "frontend/node_modules" ]; then \
+		cd frontend && npm install; \
+		echo "$(GREEN)Frontend dependencies installed.$(NC)"; \
+	else \
+		echo "$(YELLOW)Frontend dependencies already installed.$(NC)"; \
+	fi
+
+build-frontend: ## Build the frontend UI
+	@echo "$(GREEN)Building frontend...$(NC)"
+	@if [ ! -d "frontend/node_modules" ]; then \
+		echo "$(YELLOW)Frontend dependencies not found. Installing...$(NC)"; \
+		cd frontend && npm install; \
+	fi
+	@if [ ! -d "app/static" ] || [ "frontend/src" -nt "app/static" ]; then \
+		cd frontend && npm run build; \
+		echo "$(GREEN)Frontend built successfully!$(NC)"; \
+	else \
+		echo "$(YELLOW)Frontend already built and up to date.$(NC)"; \
+	fi
+
+dev: build-frontend ## Start server in development mode with auto-reload
 	@echo "$(GREEN)Starting in development mode...$(NC)"
 	@. venv/bin/activate && python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --log-level debug
+
+dev-backend: ## Start backend only (without building frontend)
+	@echo "$(GREEN)Starting backend in development mode...$(NC)"
+	@if [ ! -d "venv" ]; then \
+		echo "$(RED)Virtual environment not found. Run 'make setup' first.$(NC)"; \
+		exit 1; \
+	fi
+	@. venv/bin/activate && python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --log-level debug
+
+dev-frontend: install-frontend ## Start frontend dev server with hot-reload
+	@echo "$(GREEN)Starting frontend development server...$(NC)"
+	@echo "$(YELLOW)Make sure backend is running on port 8000$(NC)"
+	@echo "$(YELLOW)Run 'make dev-backend' in another terminal$(NC)"
+	@echo ""
+	@cd frontend && npm run dev
 
 test: ## Run tests (placeholder - add tests in future)
 	@echo "$(YELLOW)Running tests...$(NC)"
@@ -63,9 +102,16 @@ clean: ## Clean up temporary files and cache
 	@rm -f quran_simple.txt 2>/dev/null || true
 	@echo "$(GREEN)Cleanup complete!$(NC)"
 
-clean-all: clean ## Clean everything including virtual environment
+clean-frontend: ## Clean frontend build artifacts
+	@echo "$(GREEN)Cleaning frontend build...$(NC)"
+	@rm -rf app/static
+	@echo "$(GREEN)Frontend build cleaned!$(NC)"
+
+clean-all: clean clean-frontend ## Clean everything including virtual environment and frontend
 	@echo "$(YELLOW)Removing virtual environment...$(NC)"
 	@rm -rf venv
+	@echo "$(YELLOW)Removing frontend dependencies...$(NC)"
+	@rm -rf frontend/node_modules
 	@echo "$(GREEN)Full cleanup complete!$(NC)"
 
 clean-debug: ## Clean debug files

@@ -63,3 +63,8 @@ quran_simple.txt
 logs/
 *.log
 .debug
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+app/static/

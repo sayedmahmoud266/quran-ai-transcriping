@@ -1,14 +1,10 @@
 #!/bin/bash
 
-# Script to run the application from within the virtual environment
+# Wrapper script - redirects to Makefile
+# Use 'make start' or 'make run' instead
 
-if [ ! -d "venv" ]; then
-    echo "Virtual environment not found. Please run setup.sh first."
-    exit 1
-fi
+echo "Note: This script is deprecated. Use 'make start' instead."
+echo "Running 'make start'..."
+echo ""
 
-echo "Activating virtual environment..."
-source venv/bin/activate
-
-echo "Starting the Quran AI API server..."
-python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+make start
