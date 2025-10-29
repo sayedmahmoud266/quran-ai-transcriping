@@ -1,4 +1,12 @@
-# Quran AI Transcription API
+# Experimental Quran AI Transcription
+
+**Note**: This repository is currently an experimental implementation using Whisper for Quran transcription. It will soon be archived as I'm working on a new version that:
+
+- Uses Google's Gemini for far better accuracy
+- Processes results significantly faster
+- Provides a more robust and maintainable codebase
+
+The new version will be available in a separate repository.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
